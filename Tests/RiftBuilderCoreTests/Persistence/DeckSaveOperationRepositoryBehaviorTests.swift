@@ -136,7 +136,8 @@ final class DeckSaveOperationRepositoryBehaviorTests: XCTestCase {
             language: "en",
             originLotID: remaining.id
         )])
-        XCTAssertTrue(try await repository.deckCardOriginLots(deckID: deck.id).isEmpty)
+        let originsAfterDisband = try await repository.deckCardOriginLots(deckID: deck.id)
+        XCTAssertTrue(originsAfterDisband.isEmpty)
     }
 }
 
