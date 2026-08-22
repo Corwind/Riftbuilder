@@ -31,6 +31,7 @@ final class AppModel {
     var notice: String?
     var searchFocusRequest = 0
     var isCardPickerPresented = false
+    var isCardAdditionInFlight = false
     var pickerSearch = ""
     var pickerZone: DeckZone = .main
     var deckNamingRequest: DeckNamingRequest?
@@ -66,6 +67,27 @@ final class AppModel {
 
     var selectedDeck: Deck? {
         decks.first { $0.id == selectedDeckID }
+    }
+
+    var selectedLegendIdentity: CardIdentity? {
+        guard let snapshot = selectedDeckSnapshot,
+              let legendEntry = snapshot.entries.first(where: { $0.zone == .legend })
+        else { return nil }
+        return snapshot.identities[legendEntry.nameSlug] ?? catalogueByNameSlug[legendEntry.nameSlug]?.identity
+    }
+
+    var selectedLegendDomains: [String] {
+        selectedLegendIdentity?.domains ?? []
+    }
+
+    func deckZoneQuantity(_ zone: DeckZone) -> Int {
+        DeckZoneCapacity.totalQuantity(in: zone, entries: selectedDeckSnapshot?.entries ?? [])
+    }
+
+    func canAddCard(_ card: AppInventoryCard, to zone: DeckZone) -> Bool {
+        !isCardAdditionInFlight
+            && DeckCardEligibility.allows(card.identity, in: zone, legend: selectedLegendIdentity)
+            && DeckZoneCapacity.canAdd(nameSlug: card.id, to: zone, entries: selectedDeckSnapshot?.entries ?? [])
     }
 
     var inventoryTotal: Int { inventory.reduce(0) { $0 + $1.availability.totalOwned } }
@@ -309,7 +331,21 @@ final class AppModel {
     }
 
     func addCard(_ card: AppInventoryCard, zone: DeckZone) async {
-        guard let deckID = selectedDeckID else { return }
+        guard let deckID = selectedDeckID, !isCardAdditionInFlight else { return }
+        guard DeckCardEligibility.allows(card.identity, in: zone, legend: selectedLegendIdentity) else {
+            notice = "\(card.identity.displayName) is not eligible for the \(zone.appTitle) zone."
+            return
+        }
+        guard DeckZoneCapacity.canAdd(nameSlug: card.id, to: zone, entries: selectedDeckSnapshot?.entries ?? []) else {
+            if let maximum = DeckZoneCapacity.maximumTotalQuantity(for: zone), deckZoneQuantity(zone) >= maximum {
+                notice = "The \(zone.appTitle) zone is limited to \(maximum) card\(maximum == 1 ? "" : "s")."
+            } else {
+                notice = "\(card.identity.displayName) is already present in the \(zone.appTitle) zone."
+            }
+            return
+        }
+        isCardAdditionInFlight = true
+        defer { isCardAdditionInFlight = false }
         if let existing = selectedDeckSnapshot?.entries.first(where: { $0.nameSlug == card.id && $0.zone == zone }) {
             await changeQuantity(existing, delta: 1)
             return

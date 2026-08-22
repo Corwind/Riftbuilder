@@ -2,12 +2,11 @@ import RiftBuilderCore
 
 extension CardIdentity {
     var appIsRune: Bool {
-        cardType?.localizedCaseInsensitiveContains("rune") == true
-            || tags.contains { $0.localizedCaseInsensitiveContains("rune") }
+        DeckCardEligibility.isRune(self)
     }
 
     var appIsBattlefield: Bool {
-        cardType?.localizedCaseInsensitiveContains("battlefield") == true
+        DeckCardEligibility.isBattlefield(self)
     }
 
     var appVisibleDomains: [String] {
