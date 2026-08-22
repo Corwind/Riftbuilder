@@ -103,7 +103,7 @@ private struct LocationPolicyRow: View {
                     set: { id in Task { await model.updateLocation(policy, kind: .deck, linkedDeckID: id) } }
                 )) {
                     Text("Not linked").tag(UUID?.none)
-                    ForEach(model.decks) { deck in Text(deck.name).tag(Optional(deck.id)) }
+                    ForEach(model.linkableDecks(for: policy)) { deck in Text(deck.name).tag(Optional(deck.id)) }
                 }
                 .frame(width: 170)
             }

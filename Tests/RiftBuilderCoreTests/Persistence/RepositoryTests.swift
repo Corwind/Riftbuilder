@@ -3,6 +3,44 @@ import XCTest
 @testable import RiftBuilderCore
 
 final class RepositoryTests: XCTestCase {
+    func testDeckLocationLinksAreOneToOneAndOnlyDeckLocationsCanLink() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        let deck = Deck(name: "Ahri")
+        try await repository.saveDeck(deck)
+        try await repository.saveLocationPolicy(LocationPolicy(
+            normalizedName: "deck a",
+            displayName: "Deck A",
+            kind: .deck,
+            countsAsAvailable: false,
+            linkedDeckID: deck.id
+        ))
+
+        do {
+            try await repository.saveLocationPolicy(LocationPolicy(
+                normalizedName: "deck b",
+                displayName: "Deck B",
+                kind: .deck,
+                countsAsAvailable: false,
+                linkedDeckID: deck.id
+            ))
+            XCTFail("Expected one-to-one deck location enforcement")
+        } catch let error as LocationPolicyPersistenceError {
+            XCTAssertEqual(error, .deckAlreadyLinked(deckID: deck.id, locationName: "Deck A"))
+        }
+
+        do {
+            try await repository.saveLocationPolicy(LocationPolicy(
+                normalizedName: "box",
+                displayName: "Box",
+                kind: .storage,
+                countsAsAvailable: true,
+                linkedDeckID: deck.id
+            ))
+            XCTFail("Expected linked storage rejection")
+        } catch let error as LocationPolicyPersistenceError {
+            XCTAssertEqual(error, .linkedDeckRequiresDeckClassification)
+        }
+    }
     func testInventorySweepPreservesLotsAndAggregatesAcrossPrintingsAndLocations() async throws {
         let repository = try GRDBRiftBuilderRepository.inMemory()
         try await repository.replaceCatalogue(

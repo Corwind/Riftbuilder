@@ -198,6 +198,28 @@ enum RiftBuilderDatabaseSchema {
                 """)
         }
 
+        migrator.registerMigration("v6_unique_deck_location_links") { db in
+            // Older builds allowed more than one location to point at a deck.
+            // Retain the first stable location and unlink any duplicates before
+            // enforcing the one-to-one relationship.
+            try db.execute(sql: """
+                UPDATE location_policy
+                SET linked_deck_id = NULL
+                WHERE linked_deck_id IS NOT NULL
+                  AND location_key NOT IN (
+                      SELECT MIN(location_key)
+                      FROM location_policy
+                      WHERE linked_deck_id IS NOT NULL
+                      GROUP BY linked_deck_id
+                  )
+                """)
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_location_policy_linked_deck_unique
+                ON location_policy(linked_deck_id)
+                WHERE linked_deck_id IS NOT NULL
+                """)
+        }
+
         return migrator
     }
 }

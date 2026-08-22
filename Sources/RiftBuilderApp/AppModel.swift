@@ -89,6 +89,14 @@ final class AppModel {
         decks.first { $0.id == selectedDeckID }
     }
 
+    func linkableDecks(for location: LocationPolicy) -> [Deck] {
+        let linkedElsewhere = Set(locations.compactMap { candidate -> UUID? in
+            guard candidate.normalizedName != location.normalizedName else { return nil }
+            return candidate.linkedDeckID
+        })
+        return decks.filter { !linkedElsewhere.contains($0.id) || $0.id == location.linkedDeckID }
+    }
+
     var selectedLegendIdentity: CardIdentity? {
         guard let snapshot = selectedDeckSnapshot,
               let legendEntry = snapshot.entries.first(where: { $0.zone == .legend })

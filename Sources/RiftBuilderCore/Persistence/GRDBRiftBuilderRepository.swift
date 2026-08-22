@@ -1,6 +1,22 @@
 import Foundation
 import GRDB
 
+public enum LocationPolicyPersistenceError: Error, Hashable, Sendable {
+    case linkedDeckRequiresDeckClassification
+    case deckAlreadyLinked(deckID: UUID, locationName: String)
+}
+
+extension LocationPolicyPersistenceError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .linkedDeckRequiresDeckClassification:
+            return "Only a location classified as Deck can be linked to a deck."
+        case let .deckAlreadyLinked(_, locationName):
+            return "This deck is already linked to the location '\(locationName)'. Unlink it there before choosing another location."
+        }
+    }
+}
+
 public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked Sendable {
     let databaseWriter: any DatabaseWriter
 
@@ -342,6 +358,19 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
 
     public func saveLocationPolicy(_ policy: LocationPolicy) async throws {
         try await databaseWriter.write { db in
+            if policy.linkedDeckID != nil, policy.kind != .deck {
+                throw LocationPolicyPersistenceError.linkedDeckRequiresDeckClassification
+            }
+            if let linkedDeckID = policy.linkedDeckID,
+               let existing = try Row.fetchOne(db, sql: """
+                   SELECT display_name FROM location_policy
+                   WHERE linked_deck_id = ? AND location_key <> ?
+                   LIMIT 1
+                   """, arguments: [linkedDeckID.uuidString, policy.normalizedName])
+            {
+                let locationName: String = existing["display_name"]
+                throw LocationPolicyPersistenceError.deckAlreadyLinked(deckID: linkedDeckID, locationName: locationName)
+            }
             try db.execute(sql: """
                 INSERT INTO location_policy (
                     location_key, display_name, color, icon, kind, counts_as_available, linked_deck_id, last_seen_at
