@@ -6,6 +6,7 @@ struct DeckEntryGridCard: View {
     let identity: CardIdentity?
     let inventory: AppInventoryCard?
     let catalogueCard: AppCatalogueCard?
+    let isAlwaysAvailable: Bool
     let changeQuantity: (Int) -> Void
     let openCard: () -> Void
 
@@ -36,12 +37,12 @@ struct DeckEntryGridCard: View {
             AdaptiveBadgeLayout(spacing: 6) {
                 QuantityBadge(title: "Owned", value: availability?.totalOwned ?? 0)
                 QuantityBadge(title: "Free", value: availability?.availableInStorage ?? 0, tint: .green)
-                if entry.zone == .rune {
+                if isAlwaysAvailable {
                     StatusPill(title: "Always available", systemImage: "infinity", tint: .green)
                 }
             }
 
-            if entry.zone != .rune {
+            if !isAlwaysAvailable {
                 AdaptiveBadgeLayout(spacing: 6) {
                     if let availability, availability.inTargetDeck > 0 {
                         QuantityBadge(title: "This deck", value: availability.inTargetDeck)

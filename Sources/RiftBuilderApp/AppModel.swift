@@ -5,6 +5,9 @@ import RiftBuilderCore
 @MainActor
 @Observable
 final class AppModel {
+    private static let alwaysAvailableRunesKey = "riftbuilder.deckInventory.alwaysAvailableRunes"
+    private static let alwaysAvailableBattlefieldsKey = "riftbuilder.deckInventory.alwaysAvailableBattlefields"
+
     var destination: AppDestination? = .inventory
     var inventoryPresentation: InventoryPresentation = .grid
     var inventoryScope: InventoryScope = .all
@@ -31,15 +34,33 @@ final class AppModel {
     var notice: String?
     var searchFocusRequest = 0
     var isCardPickerPresented = false
+    var isCardAdditionInFlight = false
     var pickerSearch = ""
     var pickerZone: DeckZone = .main
     var deckNamingRequest: DeckNamingRequest?
+    var alwaysAvailableRunes: Bool {
+        didSet { defaults.set(alwaysAvailableRunes, forKey: Self.alwaysAvailableRunesKey) }
+    }
+    var alwaysAvailableBattlefields: Bool {
+        didSet { defaults.set(alwaysAvailableBattlefields, forKey: Self.alwaysAvailableBattlefieldsKey) }
+    }
 
     let service: any AppDataServicing
+    @ObservationIgnored private let defaults: UserDefaults
     private var didBootstrap = false
 
-    init(service: any AppDataServicing) {
+    init(service: any AppDataServicing, defaults: UserDefaults = .standard) {
         self.service = service
+        self.defaults = defaults
+        alwaysAvailableRunes = defaults.object(forKey: Self.alwaysAvailableRunesKey) as? Bool ?? true
+        alwaysAvailableBattlefields = defaults.object(forKey: Self.alwaysAvailableBattlefieldsKey) as? Bool ?? true
+    }
+
+    var deckInventoryAvailability: DeckInventoryAvailability {
+        DeckInventoryAvailability(
+            alwaysAvailableRunes: alwaysAvailableRunes,
+            alwaysAvailableBattlefields: alwaysAvailableBattlefields
+        )
     }
 
     var filteredInventory: [AppInventoryCard] {
@@ -66,6 +87,40 @@ final class AppModel {
 
     var selectedDeck: Deck? {
         decks.first { $0.id == selectedDeckID }
+    }
+
+    func linkableDecks(for location: LocationPolicy) -> [Deck] {
+        let linkedElsewhere = Set(locations.compactMap { candidate -> UUID? in
+            guard candidate.normalizedName != location.normalizedName else { return nil }
+            return candidate.linkedDeckID
+        })
+        return decks.filter { !linkedElsewhere.contains($0.id) || $0.id == location.linkedDeckID }
+    }
+
+    var importableDeckLocations: [LocationPolicy] {
+        locations.filter { $0.kind == .deck && $0.linkedDeckID == nil }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    var selectedLegendIdentity: CardIdentity? {
+        guard let snapshot = selectedDeckSnapshot,
+              let legendEntry = snapshot.entries.first(where: { $0.zone == .legend })
+        else { return nil }
+        return snapshot.identities[legendEntry.nameSlug] ?? catalogueByNameSlug[legendEntry.nameSlug]?.identity
+    }
+
+    var selectedLegendDomains: [String] {
+        selectedLegendIdentity?.domains ?? []
+    }
+
+    func deckZoneQuantity(_ zone: DeckZone) -> Int {
+        DeckZoneCapacity.totalQuantity(in: zone, entries: selectedDeckSnapshot?.entries ?? [])
+    }
+
+    func canAddCard(_ card: AppInventoryCard, to zone: DeckZone) -> Bool {
+        !isCardAdditionInFlight
+            && DeckCardEligibility.allows(card.identity, in: zone, legend: selectedLegendIdentity)
+            && DeckZoneCapacity.canAdd(nameSlug: card.id, to: zone, entries: selectedDeckSnapshot?.entries ?? [])
     }
 
     var inventoryTotal: Int { inventory.reduce(0) { $0 + $1.availability.totalOwned } }
@@ -152,7 +207,7 @@ final class AppModel {
             return
         }
         do {
-            selectedDeckSnapshot = try await service.deckSnapshot(id: selectedDeckID)
+            selectedDeckSnapshot = try await service.beginDeckDraft(id: selectedDeckID)?.deckSnapshot
             if let selectedDeckSnapshot {
                 validationIssues = await service.validationIssues(for: selectedDeckSnapshot)
                 let domains = selectedDeckSnapshot.entries
@@ -298,9 +353,9 @@ final class AppModel {
         changed.quantity += delta
         do {
             if changed.quantity <= 0 {
-                try await service.deleteDeckEntry(id: changed.id)
+                try await service.deleteDeckDraftEntry(id: changed.id)
             } else {
-                try await service.saveDeckEntry(changed)
+                try await service.saveDeckDraftEntry(changed)
             }
             await loadSelectedDeck()
         } catch {
@@ -309,13 +364,27 @@ final class AppModel {
     }
 
     func addCard(_ card: AppInventoryCard, zone: DeckZone) async {
-        guard let deckID = selectedDeckID else { return }
+        guard let deckID = selectedDeckID, !isCardAdditionInFlight else { return }
+        guard DeckCardEligibility.allows(card.identity, in: zone, legend: selectedLegendIdentity) else {
+            notice = "\(card.identity.displayName) is not eligible for the \(zone.appTitle) zone."
+            return
+        }
+        guard DeckZoneCapacity.canAdd(nameSlug: card.id, to: zone, entries: selectedDeckSnapshot?.entries ?? []) else {
+            if let maximum = DeckZoneCapacity.maximumTotalQuantity(for: zone), deckZoneQuantity(zone) >= maximum {
+                notice = "The \(zone.appTitle) zone is limited to \(maximum) card\(maximum == 1 ? "" : "s")."
+            } else {
+                notice = "\(card.identity.displayName) is already present in the \(zone.appTitle) zone."
+            }
+            return
+        }
+        isCardAdditionInFlight = true
+        defer { isCardAdditionInFlight = false }
         if let existing = selectedDeckSnapshot?.entries.first(where: { $0.nameSlug == card.id && $0.zone == zone }) {
             await changeQuantity(existing, delta: 1)
             return
         }
         do {
-            try await service.saveDeckEntry(DeckEntry(deckID: deckID, zone: zone, nameSlug: card.id, quantity: 1))
+            try await service.saveDeckDraftEntry(DeckEntry(deckID: deckID, zone: zone, nameSlug: card.id, quantity: 1))
             isCardPickerPresented = false
             await loadSelectedDeck()
         } catch {

@@ -3,6 +3,81 @@ import XCTest
 @testable import RiftBuilderCore
 
 final class RepositoryTests: XCTestCase {
+    func testDeckLocationLinksAreOneToOneAndOnlyDeckLocationsCanLink() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        let deck = Deck(name: "Ahri")
+        try await repository.saveDeck(deck)
+        try await repository.saveLocationPolicy(LocationPolicy(
+            normalizedName: "deck a",
+            displayName: "Deck A",
+            kind: .deck,
+            countsAsAvailable: false,
+            linkedDeckID: deck.id
+        ))
+
+        do {
+            try await repository.saveLocationPolicy(LocationPolicy(
+                normalizedName: "deck b",
+                displayName: "Deck B",
+                kind: .deck,
+                countsAsAvailable: false,
+                linkedDeckID: deck.id
+            ))
+            XCTFail("Expected one-to-one deck location enforcement")
+        } catch let error as LocationPolicyPersistenceError {
+            XCTAssertEqual(error, .deckAlreadyLinked(deckID: deck.id, locationName: "Deck A"))
+        }
+
+        do {
+            try await repository.saveLocationPolicy(LocationPolicy(
+                normalizedName: "box",
+                displayName: "Box",
+                kind: .storage,
+                countsAsAvailable: true,
+                linkedDeckID: deck.id
+            ))
+            XCTFail("Expected linked storage rejection")
+        } catch let error as LocationPolicyPersistenceError {
+            XCTAssertEqual(error, .linkedDeckRequiresDeckClassification)
+        }
+    }
+
+    func testImportDeckSnapshotAndLocationLinkAreCommittedAtomically() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        let printing = CardPrinting(productID: 1, nameSlug: "ahri", printingSlug: "ahri-1", displayName: "Ahri")
+        try await repository.replaceCatalogue(printings: [printing], checksum: "catalogue", completedAt: .distantPast)
+        try await repository.synchronizeInventory(
+            lines: [InventoryLine(inventoryID: "deck-line", productID: 1, finish: "normal", quantity: 1, locationName: "Scanned Deck", updatedAt: .distantPast)],
+            locations: [InventoryLocation(name: "Scanned Deck")],
+            generation: UUID(),
+            completedAt: .distantPast
+        )
+        try await repository.saveLocationPolicy(LocationPolicy(normalizedName: "scanned deck", displayName: "Scanned Deck", kind: .deck, countsAsAvailable: false))
+        let deck = Deck(name: "Imported", state: .assembled)
+        let snapshot = DeckSnapshot(
+            deck: deck,
+            entries: [DeckEntry(deckID: deck.id, zone: .main, nameSlug: "ahri", quantity: 1, preferredProductID: 1, preferredFinish: "normal")],
+            identities: [:]
+        )
+
+        try await repository.importDeckSnapshot(snapshot, fromLocationKey: "scanned deck")
+
+        let importedSnapshot = try await repository.deckSnapshot(id: deck.id)
+        let linkedPolicies = try await repository.locationPolicies()
+        XCTAssertEqual(importedSnapshot?.entries.first?.nameSlug, "ahri")
+        XCTAssertEqual(linkedPolicies.first { $0.normalizedName == "scanned deck" }?.linkedDeckID, deck.id)
+
+        let rejectedDeck = Deck(name: "Duplicate Import", state: .assembled)
+        let rejectedSnapshot = DeckSnapshot(deck: rejectedDeck, entries: [], identities: [:])
+        do {
+            try await repository.importDeckSnapshot(rejectedSnapshot, fromLocationKey: "scanned deck")
+            XCTFail("Expected already-linked location rejection")
+        } catch let error as DeckLocationImportPersistenceError {
+            XCTAssertEqual(error, .locationAlreadyLinked("Scanned Deck", deck.id))
+        }
+        let rejectedDeckSnapshot = try await repository.deckSnapshot(id: rejectedDeck.id)
+        XCTAssertNil(rejectedDeckSnapshot, "The rejected deck insert must roll back with the link failure")
+    }
     func testInventorySweepPreservesLotsAndAggregatesAcrossPrintingsAndLocations() async throws {
         let repository = try GRDBRiftBuilderRepository.inMemory()
         try await repository.replaceCatalogue(

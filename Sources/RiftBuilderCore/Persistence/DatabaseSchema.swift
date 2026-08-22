@@ -126,6 +126,100 @@ enum RiftBuilderDatabaseSchema {
             }
         }
 
+        migrator.registerMigration("v3_deck_drafts") { db in
+            try db.create(table: "deck_draft") { table in
+                table.column("deck_id", .text).primaryKey().references("deck", onDelete: .cascade)
+                table.column("base_deck_updated_at", .text).notNull()
+                table.column("created_at", .text).notNull()
+                table.column("updated_at", .text).notNull()
+            }
+
+            try db.create(table: "deck_draft_entry") { table in
+                table.column("id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().references("deck_draft", column: "deck_id", onDelete: .cascade)
+                table.column("zone", .text).notNull()
+                table.column("name_slug", .text).notNull().references("card_identity", onDelete: .restrict)
+                table.column("quantity", .integer).notNull().check { $0 > 0 }
+                table.column("preferred_product_id", .integer).references("card_printing", onDelete: .setNull)
+                table.column("preferred_finish", .text)
+                table.column("preferred_language", .text)
+            }
+
+            try db.create(index: "idx_deck_draft_entry_deck", on: "deck_draft_entry", columns: ["deck_id"])
+            try db.create(index: "idx_deck_draft_entry_zone", on: "deck_draft_entry", columns: ["zone"])
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_deck_draft_entry_logical_unique
+                ON deck_draft_entry(
+                    deck_id,
+                    zone,
+                    name_slug,
+                    IFNULL(preferred_product_id, -1),
+                    IFNULL(preferred_finish, ''),
+                    IFNULL(preferred_language, '')
+                )
+                """)
+        }
+
+        migrator.registerMigration("v4_deck_save_operations") { db in
+            try db.create(table: "deck_save_operation") { table in
+                table.column("operation_id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().unique().references("deck", onDelete: .cascade)
+                table.column("draft_updated_at", .text).notNull()
+                table.column("plan_json", .text).notNull()
+                table.column("created_at", .text).notNull()
+            }
+        }
+
+        migrator.registerMigration("v5_deck_card_origins") { db in
+            try db.create(table: "deck_card_origin") { table in
+                table.column("id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().references("deck", onDelete: .cascade)
+                table.column("name_slug", .text).notNull().references("card_identity", onDelete: .restrict)
+                table.column("product_id", .integer).notNull().references("card_printing", onDelete: .restrict)
+                table.column("finish", .text).notNull()
+                table.column("language", .text)
+                table.column("previous_location_key", .text).notNull()
+                table.column("previous_location_name", .text)
+                table.column("quantity", .integer).notNull().check { $0 > 0 }
+                table.column("created_at", .text).notNull()
+            }
+            try db.create(index: "idx_deck_card_origin_deck", on: "deck_card_origin", columns: ["deck_id"])
+            try db.create(index: "idx_deck_card_origin_card", on: "deck_card_origin", columns: ["deck_id", "name_slug", "product_id"])
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_deck_card_origin_lot_unique
+                ON deck_card_origin(
+                    deck_id,
+                    name_slug,
+                    product_id,
+                    finish,
+                    IFNULL(language, ''),
+                    previous_location_key
+                )
+                """)
+        }
+
+        migrator.registerMigration("v6_unique_deck_location_links") { db in
+            // Older builds allowed more than one location to point at a deck.
+            // Retain the first stable location and unlink any duplicates before
+            // enforcing the one-to-one relationship.
+            try db.execute(sql: """
+                UPDATE location_policy
+                SET linked_deck_id = NULL
+                WHERE linked_deck_id IS NOT NULL
+                  AND location_key NOT IN (
+                      SELECT MIN(location_key)
+                      FROM location_policy
+                      WHERE linked_deck_id IS NOT NULL
+                      GROUP BY linked_deck_id
+                  )
+                """)
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_location_policy_linked_deck_unique
+                ON location_policy(linked_deck_id)
+                WHERE linked_deck_id IS NOT NULL
+                """)
+        }
+
         return migrator
     }
 }

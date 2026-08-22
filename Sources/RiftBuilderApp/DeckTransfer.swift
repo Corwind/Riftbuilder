@@ -56,9 +56,10 @@ extension DeckTransferServicing {
 
         do {
             try await saveDeck(decoded.deck)
+            _ = try await beginDeckDraft(id: newDeckID)
             for entry in resolvedEntries {
                 try Task.checkCancellation()
-                try await saveDeckEntry(entry)
+                try await saveDeckDraftEntry(entry)
             }
         } catch {
             try? await deleteDeck(id: newDeckID)
@@ -74,7 +75,14 @@ extension DeckTransferServicing {
     }
 
     func exportDeckDocument(id: UUID) async throws -> AppDeckExportPayload {
-        guard let snapshot = try await deckSnapshot(id: id) else { throw AppDeckTransferError.deckNotFound }
+        let draft = try await deckDraftSnapshot(id: id)
+        let snapshot: DeckSnapshot?
+        if let draft {
+            snapshot = draft.deckSnapshot
+        } else {
+            snapshot = try await deckSnapshot(id: id)
+        }
+        guard let snapshot else { throw AppDeckTransferError.deckNotFound }
         return AppDeckExportPayload(
             data: try RiftDeckCodec.encode(snapshot: snapshot, prettyPrinted: true),
             plainText: HumanReadableDeckExporter.export(snapshot),

@@ -75,4 +75,79 @@ final class UnlimitedRuneAssemblyTests: XCTestCase {
         XCTAssertEqual(plan.missingQuantity, 0)
         XCTAssertTrue(plan.canFullyAssemble)
     }
+
+    func testRunesUseScannedInventoryWhenAlwaysAvailableRunesIsDisabled() throws {
+        let deckID = UUID(uuidString: "00000000-0000-0000-0000-000000000051")!
+        let plan = try DeckAssemblyPlanner().makePlan(AssemblyPlanRequest(
+            deck: DeckSnapshot(
+                deck: Deck(id: deckID, name: "Physical Runes"),
+                entries: [DeckEntry(deckID: deckID, zone: .rune, nameSlug: "calm-rune", quantity: 2)],
+                identities: [:]
+            ),
+            inventory: AssemblyInventorySnapshot(
+                lines: [InventoryLine(inventoryID: "rune-box", productID: 201, finish: "normal", language: "en", quantity: 1, locationName: "Box A", updatedAt: .distantPast)],
+                printingsByProductID: [201: CardPrinting(productID: 201, nameSlug: "calm-rune", printingSlug: "calm-rune-201", displayName: "Calm Rune")],
+                locationPolicies: [
+                    LocationPolicy(normalizedName: "box a", displayName: "Box A", kind: .storage, countsAsAvailable: true),
+                    LocationPolicy(normalizedName: "deck physical runes", displayName: "Deck Physical Runes", kind: .deck, countsAsAvailable: false, linkedDeckID: deckID),
+                ]
+            ),
+            destinationLocationName: "Deck Physical Runes",
+            inventoryAvailability: DeckInventoryAvailability(alwaysAvailableRunes: false, alwaysAvailableBattlefields: true)
+        ))
+
+        XCTAssertEqual(plan.requirements.first?.nameSlug, "calm-rune")
+        XCTAssertEqual(plan.requirements.first?.required, 2)
+        XCTAssertEqual(plan.requirements.first?.allocatedFromStorage, 1)
+        XCTAssertEqual(plan.missingQuantity, 1)
+        XCTAssertEqual(plan.movements.map(\.inventoryID), ["rune-box"])
+        XCTAssertFalse(plan.canFullyAssemble)
+    }
+
+    func testBattlefieldsCanBeAlwaysAvailableIndependentlyFromRunes() throws {
+        let deckID = UUID(uuidString: "00000000-0000-0000-0000-000000000061")!
+        let plan = try DeckAssemblyPlanner().makePlan(AssemblyPlanRequest(
+            deck: DeckSnapshot(
+                deck: Deck(id: deckID, name: "Virtual Battlefields"),
+                entries: [
+                    DeckEntry(deckID: deckID, zone: .battlefield, nameSlug: "spirit-realm", quantity: 3),
+                    DeckEntry(deckID: deckID, zone: .rune, nameSlug: "calm-rune", quantity: 1),
+                ],
+                identities: [:]
+            ),
+            inventory: AssemblyInventorySnapshot(
+                lines: [],
+                printingsByProductID: [:],
+                locationPolicies: [LocationPolicy(normalizedName: "deck virtual battlefields", displayName: "Deck Virtual Battlefields", kind: .deck, countsAsAvailable: false, linkedDeckID: deckID)]
+            ),
+            destinationLocationName: "Deck Virtual Battlefields",
+            inventoryAvailability: DeckInventoryAvailability(alwaysAvailableRunes: false, alwaysAvailableBattlefields: true)
+        ))
+
+        XCTAssertEqual(plan.requirements.map(\.nameSlug), ["calm-rune"])
+        XCTAssertEqual(plan.missingQuantity, 1)
+        XCTAssertFalse(plan.requirements.contains { $0.nameSlug == "spirit-realm" })
+    }
+
+    func testBattlefieldsUseScannedInventoryWhenAlwaysAvailableBattlefieldsIsDisabled() throws {
+        let deckID = UUID(uuidString: "00000000-0000-0000-0000-000000000071")!
+        let plan = try DeckAssemblyPlanner().makePlan(AssemblyPlanRequest(
+            deck: DeckSnapshot(
+                deck: Deck(id: deckID, name: "Physical Battlefields"),
+                entries: [DeckEntry(deckID: deckID, zone: .battlefield, nameSlug: "spirit-realm", quantity: 3)],
+                identities: [:]
+            ),
+            inventory: AssemblyInventorySnapshot(
+                lines: [],
+                printingsByProductID: [:],
+                locationPolicies: [LocationPolicy(normalizedName: "deck physical battlefields", displayName: "Deck Physical Battlefields", kind: .deck, countsAsAvailable: false, linkedDeckID: deckID)]
+            ),
+            destinationLocationName: "Deck Physical Battlefields",
+            inventoryAvailability: DeckInventoryAvailability(alwaysAvailableRunes: true, alwaysAvailableBattlefields: false)
+        ))
+
+        XCTAssertEqual(plan.requirements.first?.nameSlug, "spirit-realm")
+        XCTAssertEqual(plan.missingQuantity, 3)
+        XCTAssertFalse(plan.canFullyAssemble)
+    }
 }

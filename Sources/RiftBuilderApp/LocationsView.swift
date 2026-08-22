@@ -3,7 +3,8 @@ import SwiftUI
 
 struct LocationsView: View {
     @Bindable var model: AppModel
-    @State private var isCreatingDeckLocation = false
+    @State private var isCreatingLocation = false
+    @State private var importLocation: LocationPolicy?
 
     var body: some View {
         Group {
@@ -19,16 +20,18 @@ struct LocationsView: View {
                     ContentUnavailableView {
                         Label("No Locations", systemImage: "shippingbox")
                     } description: {
-                        Text("Create a deck location here or synchronize locations already present in CardNexus.")
+                        Text("Create a location here or synchronize locations already present in CardNexus.")
                     } actions: {
-                        Button("Create Deck Location") { isCreatingDeckLocation = true }
+                        Button("Create Location") { isCreatingLocation = true }
                     }
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
                             locationSummary
                             ForEach(model.locations) { policy in
-                                LocationPolicyRow(policy: policy, model: model)
+                                LocationPolicyRow(policy: policy, model: model) {
+                                    importLocation = policy
+                                }
                             }
                         }
                         .padding()
@@ -40,9 +43,9 @@ struct LocationsView: View {
         .navigationTitle("Locations")
         .toolbar {
             Button {
-                isCreatingDeckLocation = true
+                isCreatingLocation = true
             } label: {
-                Label("Create Deck Location", systemImage: "plus")
+                Label("Create Location", systemImage: "plus")
             }
             Button {
                 Task { await model.loadLocations() }
@@ -50,8 +53,11 @@ struct LocationsView: View {
                 Label("Refresh Locations", systemImage: "arrow.clockwise")
             }
         }
-        .sheet(isPresented: $isCreatingDeckLocation) {
-            CreateDeckLocationView(model: model)
+        .sheet(isPresented: $isCreatingLocation) {
+            CreateLocationView(model: model)
+        }
+        .sheet(item: $importLocation) { location in
+            ImportDeckFromLocationView(location: location, model: model)
         }
     }
 
@@ -73,6 +79,7 @@ struct LocationsView: View {
 private struct LocationPolicyRow: View {
     let policy: LocationPolicy
     @Bindable var model: AppModel
+    let importDeck: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -86,6 +93,13 @@ private struct LocationPolicyRow: View {
                 Text(policy.normalizedName == "__unlocated__" ? "Cards without a CardNexus location" : "CardNexus location")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if policy.kind == .deck && policy.linkedDeckID == nil {
+                    Button(action: importDeck) {
+                        Label("Create deck from this location", systemImage: "rectangle.stack.badge.plus")
+                    }
+                    .buttonStyle(.link)
+                    .help("Create a legal deck definition from cards in this location")
+                }
             }
             Spacer()
             Picker("Classification", selection: Binding(
@@ -103,7 +117,7 @@ private struct LocationPolicyRow: View {
                     set: { id in Task { await model.updateLocation(policy, kind: .deck, linkedDeckID: id) } }
                 )) {
                     Text("Not linked").tag(UUID?.none)
-                    ForEach(model.decks) { deck in Text(deck.name).tag(Optional(deck.id)) }
+                    ForEach(model.linkableDecks(for: policy)) { deck in Text(deck.name).tag(Optional(deck.id)) }
                 }
                 .frame(width: 170)
             }
@@ -111,5 +125,50 @@ private struct LocationPolicyRow: View {
         .padding(14)
         .background { ThemedCardSurface(cornerRadius: 12, tintStrength: 0.055, shadowStrength: 0.07) }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ImportDeckFromLocationView: View {
+    let location: LocationPolicy
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var deckName: String
+    @State private var isImporting = false
+
+    init(location: LocationPolicy, model: AppModel) {
+        self.location = location
+        self.model = model
+        _deckName = State(initialValue: location.displayName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Import Deck from Location").font(.title2.weight(.semibold))
+                Text(location.displayName).foregroundStyle(.secondary)
+            }
+            TextField("Deck name", text: $deckName)
+                .textFieldStyle(.roundedBorder)
+            Text("RiftBuilder infers zones from the scanned cards. A complete legal deck is imported as assembled; an incomplete but legally extendable subset is imported as pending. Structurally illegal contents are rejected without saving or linking anything.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(isImporting ? "Importing…" : "Import and Link") {
+                    isImporting = true
+                    Task {
+                        if await model.importDeck(from: location, named: deckName) { dismiss() }
+                        isImporting = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isImporting || deckName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
     }
 }

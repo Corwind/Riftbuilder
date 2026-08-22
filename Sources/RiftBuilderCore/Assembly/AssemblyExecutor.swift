@@ -29,7 +29,7 @@ public struct AssemblyExecutor: Sendable {
     }
 
     public func execute(_ plan: AssemblyPlan) async throws -> AssemblyExecutionReport {
-        let batches = plan.movements.chunked(maximumCount: 200)
+        let batches = plan.movements.chunkedForCardNexus(maximumCount: 200)
         let initialResults = batches.enumerated().flatMap { batchIndex, movements in
             let key = Self.idempotencyKey(planID: plan.planID, batchIndex: batchIndex)
             return movements.map {
@@ -154,16 +154,22 @@ private extension CardNexusClientError {
 }
 
 private extension Array {
-    func chunked(maximumCount: Int) -> [[Element]] {
+    func chunkedForCardNexus(maximumCount: Int) -> [[Element]] where Element == PlannedInventoryMovement {
         guard !isEmpty else { return [] }
         var chunks: [[Element]] = []
         chunks.reserveCapacity((count + maximumCount - 1) / maximumCount)
-        var start = startIndex
-        while start < endIndex {
-            let end = index(start, offsetBy: maximumCount, limitedBy: endIndex) ?? endIndex
-            chunks.append(Array(self[start ..< end]))
-            start = end
+        var current: [Element] = []
+        var inventoryIDs: Set<String> = []
+        for movement in self {
+            if current.count == maximumCount || inventoryIDs.contains(movement.inventoryID) {
+                chunks.append(current)
+                current = []
+                inventoryIDs = []
+            }
+            current.append(movement)
+            inventoryIDs.insert(movement.inventoryID)
         }
+        if !current.isEmpty { chunks.append(current) }
         return chunks
     }
 }

@@ -1,8 +1,24 @@
 import Foundation
 import GRDB
 
+public enum LocationPolicyPersistenceError: Error, Hashable, Sendable {
+    case linkedDeckRequiresDeckClassification
+    case deckAlreadyLinked(deckID: UUID, locationName: String)
+}
+
+extension LocationPolicyPersistenceError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .linkedDeckRequiresDeckClassification:
+            return "Only a location classified as Deck can be linked to a deck."
+        case let .deckAlreadyLinked(_, locationName):
+            return "This deck is already linked to the location '\(locationName)'. Unlink it there before choosing another location."
+        }
+    }
+}
+
 public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked Sendable {
-    private let databaseWriter: any DatabaseWriter
+    let databaseWriter: any DatabaseWriter
 
     public init(databaseWriter: any DatabaseWriter) throws {
         self.databaseWriter = databaseWriter
@@ -42,11 +58,17 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                   AND product_id NOT IN (
                       SELECT preferred_product_id FROM deck_entry WHERE preferred_product_id IS NOT NULL
                   )
+                  AND product_id NOT IN (
+                      SELECT preferred_product_id FROM deck_draft_entry WHERE preferred_product_id IS NOT NULL
+                  )
+                  AND product_id NOT IN (SELECT product_id FROM deck_card_origin)
                 """)
             try db.execute(sql: """
                 DELETE FROM card_identity
                 WHERE name_slug NOT IN (SELECT name_slug FROM card_printing)
                   AND name_slug NOT IN (SELECT name_slug FROM deck_entry)
+                  AND name_slug NOT IN (SELECT name_slug FROM deck_draft_entry)
+                  AND name_slug NOT IN (SELECT name_slug FROM deck_card_origin)
                 """)
             try db.execute(sql: "DROP TABLE incoming_product_ids")
             try Self.setMetadata("catalogue_checksum", value: checksum, in: db)
@@ -336,6 +358,19 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
 
     public func saveLocationPolicy(_ policy: LocationPolicy) async throws {
         try await databaseWriter.write { db in
+            if policy.linkedDeckID != nil, policy.kind != .deck {
+                throw LocationPolicyPersistenceError.linkedDeckRequiresDeckClassification
+            }
+            if let linkedDeckID = policy.linkedDeckID,
+               let existing = try Row.fetchOne(db, sql: """
+                   SELECT display_name FROM location_policy
+                   WHERE linked_deck_id = ? AND location_key <> ?
+                   LIMIT 1
+                   """, arguments: [linkedDeckID.uuidString, policy.normalizedName])
+            {
+                let locationName: String = existing["display_name"]
+                throw LocationPolicyPersistenceError.deckAlreadyLinked(deckID: linkedDeckID, locationName: locationName)
+            }
             try db.execute(sql: """
                 INSERT INTO location_policy (
                     location_key, display_name, color, icon, kind, counts_as_available, linked_deck_id, last_seen_at
@@ -369,11 +404,18 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
     public func deckLegendDomains() async throws -> [UUID: [String]] {
         try await databaseWriter.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT de.deck_id, ci.domains_json
-                FROM deck_entry de
-                JOIN card_identity ci ON ci.name_slug = de.name_slug
-                WHERE de.zone = ?
-                ORDER BY de.deck_id, de.id
+                WITH effective_entry AS (
+                    SELECT deck_id, id, zone, name_slug FROM deck_draft_entry
+                    UNION ALL
+                    SELECT de.deck_id, de.id, de.zone, de.name_slug
+                    FROM deck_entry de
+                    WHERE NOT EXISTS (SELECT 1 FROM deck_draft dd WHERE dd.deck_id = de.deck_id)
+                )
+                SELECT ee.deck_id, ci.domains_json
+                FROM effective_entry ee
+                JOIN card_identity ci ON ci.name_slug = ee.name_slug
+                WHERE ee.zone = ?
+                ORDER BY ee.deck_id, ee.id
                 """, arguments: [DeckZone.legend.rawValue])
             var result: [UUID: [String]] = [:]
             for row in rows {
@@ -511,7 +553,7 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
     }
 }
 
-private extension GRDBRiftBuilderRepository {
+extension GRDBRiftBuilderRepository {
     static func identity(from printing: CardPrinting) -> CardIdentity {
         let attributes = printing.attributes
         return CardIdentity(
@@ -717,10 +759,16 @@ private extension GRDBRiftBuilderRepository {
     static func requiredQuantity(nameSlug: String, targetDeckID: UUID?, in db: Database) throws -> Int {
         guard let targetDeckID else { return 0 }
         return try Int.fetchOne(db, sql: """
-            SELECT COALESCE(SUM(quantity), 0)
-            FROM deck_entry
-            WHERE deck_id = ? AND name_slug = ?
-            """, arguments: [targetDeckID.uuidString, nameSlug]) ?? 0
+            SELECT COALESCE(SUM(quantity), 0) FROM (
+                SELECT quantity, name_slug FROM deck_draft_entry
+                WHERE deck_id = ?
+                UNION ALL
+                SELECT quantity, name_slug FROM deck_entry
+                WHERE deck_id = ?
+                  AND NOT EXISTS (SELECT 1 FROM deck_draft WHERE deck_id = ?)
+            ) effective_entry
+            WHERE name_slug = ?
+            """, arguments: [targetDeckID.uuidString, targetDeckID.uuidString, targetDeckID.uuidString, nameSlug]) ?? 0
     }
 
     static func availability(from locations: [LocationQuantity], required: Int, targetDeckID: UUID?) -> CardAvailability {

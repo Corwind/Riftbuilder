@@ -33,6 +33,8 @@ struct AppPhysicalPlan: Identifiable, Sendable {
     let deckName: String
     let movements: [AppPhysicalMovement]
     let missingRequirements: [AppMissingRequirement]
+    let returnRoutes: [DeckReturnRoute]
+    let storageLocations: [LocationPolicy]
 
     var id: UUID {
         switch payload {
@@ -48,7 +50,14 @@ struct AppPhysicalPlan: Identifiable, Sendable {
         }
     }
 
-    var canExecute: Bool { missingRequirements.isEmpty && !movements.isEmpty }
+    var canExecute: Bool {
+        let routesResolved: Bool
+        switch payload {
+        case .assembly: routesResolved = true
+        case let .disassembly(plan): routesResolved = plan.canApply
+        }
+        return missingRequirements.isEmpty && routesResolved && !movements.isEmpty
+    }
 }
 
 struct AppPhysicalExecutionOutcome: Sendable {
@@ -76,21 +85,21 @@ enum AppPhysicalAssemblyError: LocalizedError {
 }
 
 protocol PhysicalAssemblyServicing: AppDataServicing {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan
-    func makeDisassemblyPlan(deckID: UUID, destinationStorageLocationName: String) async throws -> AppPhysicalPlan
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan
+    func makeDisassemblyPlan(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppPhysicalPlan
     func assemblyStorageLocations() async throws -> [LocationPolicy]
     func executePhysicalPlan(_ plan: AppPhysicalPlan) async throws -> AppPhysicalExecutionOutcome
 }
 
 extension PhysicalAssemblyServicing {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical assembly is unavailable.") }
-    func makeDisassemblyPlan(deckID: UUID, destinationStorageLocationName: String) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical disassembly is unavailable.") }
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical assembly is unavailable.") }
+    func makeDisassemblyPlan(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical disassembly is unavailable.") }
     func assemblyStorageLocations() async throws -> [LocationPolicy] { [] }
     func executePhysicalPlan(_ plan: AppPhysicalPlan) async throws -> AppPhysicalExecutionOutcome { throw AppServiceError.unavailable("Physical inventory writing is unavailable.") }
 }
 
 extension LiveAppDataService {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan {
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan {
         guard let deck = try await repository.deckSnapshot(id: deckID) else { throw AppPhysicalAssemblyError.deckNotFound }
         let inventory = try await assemblyStore.assemblyInventorySnapshot()
         guard let destination = inventory.locationPolicies.first(where: { $0.kind == .deck && $0.linkedDeckID == deckID }) else {
@@ -99,22 +108,25 @@ extension LiveAppDataService {
         let plan = try DeckAssemblyPlanner().makePlan(AssemblyPlanRequest(
             deck: deck,
             inventory: inventory,
-            destinationLocationName: destination.displayName
+            destinationLocationName: destination.displayName,
+            inventoryAvailability: inventoryAvailability
         ))
         return Self.present(plan: .assembly(plan), deck: deck, inventory: inventory)
     }
 
-    func makeDisassemblyPlan(deckID: UUID, destinationStorageLocationName: String) async throws -> AppPhysicalPlan {
+    func makeDisassemblyPlan(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppPhysicalPlan {
         guard let deck = try await repository.deckSnapshot(id: deckID) else { throw AppPhysicalAssemblyError.deckNotFound }
         let inventory = try await assemblyStore.assemblyInventorySnapshot()
         guard let source = inventory.locationPolicies.first(where: { $0.kind == .deck && $0.linkedDeckID == deckID }) else {
             throw AppPhysicalAssemblyError.linkedDeckLocationMissing
         }
+        let originLots = try await repository.deckCardOriginLots(deckID: deckID)
         let plan = try DeckDisassemblyPlanner().makePlan(DisassemblyPlanRequest(
             deckID: deckID,
             inventory: inventory,
             sourceDeckLocationName: source.displayName,
-            destinationStorageLocationName: destinationStorageLocationName
+            removalDestinations: removalDestinations,
+            originLots: originLots
         ))
         return Self.present(plan: .disassembly(plan), deck: deck, inventory: inventory)
     }
@@ -146,6 +158,13 @@ extension LiveAppDataService {
 
         do {
             let reconciledAt = try await synchronize()
+            if case let .disassembly(disassembly) = plan.payload {
+                let succeededMovements = report.results.compactMap { result -> PlannedInventoryMovement? in
+                    if case .succeeded = result.status { return result.movement }
+                    return nil
+                }
+                try await repository.consumeDeckCardOrigins(deckID: disassembly.deckID, movements: succeededMovements)
+            }
             try await assemblyStore.markAssemblyExecutionReconciled(planID: report.planID)
             return AppPhysicalExecutionOutcome(report: report, reconciledAt: reconciledAt, reconciliationError: nil)
         } catch {
@@ -156,13 +175,16 @@ extension LiveAppDataService {
     private static func present(plan payload: AppPhysicalPlan.Payload, deck: DeckSnapshot, inventory: AssemblyInventorySnapshot) -> AppPhysicalPlan {
         let rawMovements: [PlannedInventoryMovement]
         let requirements: [AssemblyRequirementResult]
+        let returnRoutes: [DeckReturnRoute]
         switch payload {
         case let .assembly(plan):
             rawMovements = plan.movements
             requirements = plan.requirements
+            returnRoutes = []
         case let .disassembly(plan):
             rawMovements = plan.movements
             requirements = []
+            returnRoutes = plan.returnRoutes
         }
         let movements = rawMovements.map { movement in
             let printing = inventory.printingsByProductID[movement.productID]
@@ -179,7 +201,9 @@ extension LiveAppDataService {
         let missing = requirements.filter { $0.missing > 0 }.map {
             AppMissingRequirement(requirement: $0, cardName: deck.identities[$0.nameSlug]?.displayName ?? $0.nameSlug)
         }
-        return AppPhysicalPlan(payload: payload, deckName: deck.deck.name, movements: movements, missingRequirements: missing)
+        let storageLocations = inventory.locationPolicies.filter { $0.kind == .storage && $0.countsAsAvailable }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        return AppPhysicalPlan(payload: payload, deckName: deck.deck.name, movements: movements, missingRequirements: missing, returnRoutes: returnRoutes, storageLocations: storageLocations)
     }
 }
 
@@ -203,6 +227,7 @@ final class PhysicalAssemblyModel {
     var isStoragePickerPresented = false
     var storageLocations: [LocationPolicy] = []
     var selectedStorageLocationName = ""
+    var disassemblyDestinations: [DeckReturnRouteKey: String] = [:]
 
     private let service: any PhysicalAssemblyServicing
 
@@ -215,7 +240,7 @@ final class PhysicalAssemblyModel {
         phase = .planning
         executionOutcome = nil
         do {
-            proposal = try await service.makeAssemblyPlan(deckID: deckID)
+            proposal = try await service.makeAssemblyPlan(deckID: deckID, inventoryAvailability: appModel.deckInventoryAvailability)
             isConfirmationPresented = true
         } catch {
             appModel.notice = "Assembly plan could not be created: \(error.localizedDescription)"
@@ -224,13 +249,27 @@ final class PhysicalAssemblyModel {
     }
 
     func beginDisassembly(deckID: UUID?, appModel: AppModel) async {
-        guard deckID != nil else { appModel.notice = AppPhysicalAssemblyError.deckNotFound.localizedDescription; return }
+        guard let deckID else { appModel.notice = AppPhysicalAssemblyError.deckNotFound.localizedDescription; return }
         phase = .planning
+        executionOutcome = nil
+        disassemblyDestinations = [:]
         do {
-            storageLocations = try await service.assemblyStorageLocations()
-            guard !storageLocations.isEmpty else { throw AppPhysicalAssemblyError.noStorageLocations }
-            selectedStorageLocationName = storageLocations.first?.displayName ?? ""
-            isStoragePickerPresented = true
+            var plan = try await service.makeDisassemblyPlan(deckID: deckID, removalDestinations: [])
+            var requiresReplan = false
+            for route in plan.returnRoutes {
+                if let destination = route.destinationLocationName {
+                    disassemblyDestinations[route.key] = destination
+                } else {
+                    guard let fallback = plan.storageLocations.first?.displayName else { throw AppPhysicalAssemblyError.noStorageLocations }
+                    disassemblyDestinations[route.key] = fallback
+                    requiresReplan = true
+                }
+            }
+            if requiresReplan {
+                plan = try await service.makeDisassemblyPlan(deckID: deckID, removalDestinations: disassemblyDestinationValues)
+            }
+            proposal = plan
+            isConfirmationPresented = true
         } catch {
             appModel.notice = "Disassembly could not start: \(error.localizedDescription)"
         }
@@ -243,12 +282,28 @@ final class PhysicalAssemblyModel {
         phase = .planning
         executionOutcome = nil
         do {
-            proposal = try await service.makeDisassemblyPlan(deckID: deckID, destinationStorageLocationName: selectedStorageLocationName)
+            proposal = try await service.makeDisassemblyPlan(deckID: deckID, removalDestinations: disassemblyDestinationValues)
             isConfirmationPresented = true
         } catch {
             appModel.notice = "Disassembly plan could not be created: \(error.localizedDescription)"
         }
         phase = .idle
+    }
+
+    func setDisassemblyDestination(_ locationName: String, for route: DeckReturnRouteKey, deckID: UUID?, appModel: AppModel) async {
+        guard let deckID else { return }
+        disassemblyDestinations[route] = locationName
+        phase = .planning
+        do {
+            proposal = try await service.makeDisassemblyPlan(deckID: deckID, removalDestinations: disassemblyDestinationValues)
+        } catch {
+            appModel.notice = "Disassembly plan could not be updated: \(error.localizedDescription)"
+        }
+        phase = .idle
+    }
+
+    private var disassemblyDestinationValues: [DeckRemovalDestination] {
+        disassemblyDestinations.map { DeckRemovalDestination(route: $0.key, locationName: $0.value) }
     }
 
     func execute(appModel: AppModel) async {
@@ -287,6 +342,7 @@ struct PhysicalAssemblyConfirmationView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if !proposal.missingRequirements.isEmpty { missingSection(proposal) }
+                        if proposal.kind == .disassembly { disassemblyDestinations(proposal) }
                         movementSection(proposal)
                         if let outcome = workflow.executionOutcome { resultSection(outcome) }
                         if workflow.executionOutcome == nil {
@@ -301,6 +357,44 @@ struct PhysicalAssemblyConfirmationView: View {
             }
         }
         .frame(minWidth: 780, minHeight: 600)
+    }
+
+    @ViewBuilder
+    private func disassemblyDestinations(_ proposal: AppPhysicalPlan) -> some View {
+        if !proposal.returnRoutes.isEmpty {
+            GroupBox("Return cards") {
+                VStack(spacing: 10) {
+                    ForEach(proposal.returnRoutes, id: \.key) { route in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(route.quantity) × \(cardName(for: route, in: proposal))").fontWeight(.medium)
+                                Text(route.previousLocationName.map { "Previous location: \($0)" } ?? "Previous location was not recorded")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Picker("Destination", selection: Binding(
+                                get: { workflow.disassemblyDestinations[route.key] ?? route.destinationLocationName ?? "" },
+                                set: { destination in
+                                    Task { await workflow.setDisassemblyDestination(destination, for: route.key, deckID: appModel.selectedDeckID, appModel: appModel) }
+                                }
+                            )) {
+                                ForEach(proposal.storageLocations) { location in
+                                    Text(location.displayName).tag(location.displayName)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 220)
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+    }
+
+    private func cardName(for route: DeckReturnRoute, in proposal: AppPhysicalPlan) -> String {
+        proposal.movements.first { $0.movement.nameSlug == route.key.requirement.nameSlug }?.cardName ?? route.key.requirement.nameSlug
     }
 
     private var header: some View {
@@ -428,7 +522,7 @@ struct DisassemblyDestinationView: View {
     }
 }
 
-private extension AssemblyMovementStatus {
+extension AssemblyMovementStatus {
     var appSystemImage: String {
         switch self {
         case .succeeded: "checkmark.circle.fill"

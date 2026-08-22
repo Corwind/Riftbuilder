@@ -15,17 +15,40 @@ public struct AssemblyInventorySnapshot: Sendable {
     }
 }
 
+/// Controls which deck zones are treated as supplies rather than scanned,
+/// individually owned cards. These choices affect availability and physical
+/// inventory movements, but never deck legality.
+public struct DeckInventoryAvailability: Codable, Hashable, Sendable {
+    public let alwaysAvailableRunes: Bool
+    public let alwaysAvailableBattlefields: Bool
+
+    public init(alwaysAvailableRunes: Bool = true, alwaysAvailableBattlefields: Bool = true) {
+        self.alwaysAvailableRunes = alwaysAvailableRunes
+        self.alwaysAvailableBattlefields = alwaysAvailableBattlefields
+    }
+
+    public func isAlwaysAvailable(_ zone: DeckZone) -> Bool {
+        switch zone {
+        case .rune: alwaysAvailableRunes
+        case .battlefield: alwaysAvailableBattlefields
+        default: false
+        }
+    }
+}
+
 public struct AssemblyPlanRequest: Sendable {
     public let planID: UUID
     public let deck: DeckSnapshot
     public let inventory: AssemblyInventorySnapshot
     public let destinationLocationName: String
+    public let inventoryAvailability: DeckInventoryAvailability
 
-    public init(planID: UUID = UUID(), deck: DeckSnapshot, inventory: AssemblyInventorySnapshot, destinationLocationName: String) {
+    public init(planID: UUID = UUID(), deck: DeckSnapshot, inventory: AssemblyInventorySnapshot, destinationLocationName: String, inventoryAvailability: DeckInventoryAvailability = DeckInventoryAvailability()) {
         self.planID = planID
         self.deck = deck
         self.inventory = inventory
         self.destinationLocationName = destinationLocationName
+        self.inventoryAvailability = inventoryAvailability
     }
 }
 
@@ -77,8 +100,11 @@ public struct PlannedInventoryMovement: Codable, Hashable, Identifiable, Sendabl
     public let quantity: Int
     public let sourceLocationName: String?
     public let destinationLocationName: String
+    public let finish: String?
+    public let language: String?
+    public let originLotID: UUID?
 
-    public init(operationID: String, inventoryID: String, productID: Int64, nameSlug: String, quantity: Int, sourceLocationName: String?, destinationLocationName: String) {
+    public init(operationID: String, inventoryID: String, productID: Int64, nameSlug: String, quantity: Int, sourceLocationName: String?, destinationLocationName: String, finish: String? = nil, language: String? = nil, originLotID: UUID? = nil) {
         self.operationID = operationID
         self.inventoryID = inventoryID
         self.productID = productID
@@ -86,6 +112,9 @@ public struct PlannedInventoryMovement: Codable, Hashable, Identifiable, Sendabl
         self.quantity = quantity
         self.sourceLocationName = sourceLocationName
         self.destinationLocationName = destinationLocationName
+        self.finish = finish
+        self.language = language
+        self.originLotID = originLotID
     }
 }
 

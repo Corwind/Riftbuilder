@@ -51,16 +51,18 @@ final class CardNexusInventoryWriteTests: XCTestCase {
     }
 
     func testLocationUpsertAlwaysSendsUpsertTrue() async throws {
-        let transport = WriteTransport(responses: [writeResponse(#"{"name":"Deck Ahri","color":"purple","icon":null}"#)])
+        let transport = WriteTransport(responses: [writeResponse(#"{"name":"Deck Ahri","color":"purple","icon":"rectangle.stack"}"#)])
         let location = try await makeWriteClient(transport).upsertInventoryLocation(
-            InventoryLocationUpsertRequest(name: " Deck Ahri ", color: "purple")
+            InventoryLocationUpsertRequest(name: " Deck Ahri ", color: "purple", icon: "rectangle.stack")
         )
-        XCTAssertEqual(location, InventoryLocation(name: "Deck Ahri", color: "purple", icon: nil))
+        XCTAssertEqual(location, InventoryLocation(name: "Deck Ahri", color: "purple", icon: "rectangle.stack"))
         let captured = await transport.requests()
         let request = try XCTUnwrap(captured.first)
         XCTAssertEqual(request.path, "/v1/inventory/locations")
         let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
         XCTAssertEqual(json["name"] as? String, "Deck Ahri")
+        XCTAssertEqual(json["color"] as? String, "purple")
+        XCTAssertEqual(json["icon"] as? String, "rectangle.stack")
         XCTAssertEqual(json["upsert"] as? Bool, true)
     }
 

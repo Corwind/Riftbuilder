@@ -309,6 +309,7 @@ private struct DeckEditorView: View {
                         identity: identity,
                         inventory: inventory,
                         catalogueCard: catalogue,
+                        isAlwaysAvailable: model.deckInventoryAvailability.isAlwaysAvailable(entry.zone),
                         changeQuantity: { delta in
                             Task { await model.changeQuantity(entry, delta: delta) }
                         },
@@ -327,6 +328,7 @@ private struct DeckEditorView: View {
                         entry: entry,
                         identity: identity,
                         inventory: inventory,
+                        isAlwaysAvailable: model.deckInventoryAvailability.isAlwaysAvailable(entry.zone),
                         changeQuantity: { delta in
                             Task { await model.changeQuantity(entry, delta: delta) }
                         },
@@ -372,7 +374,7 @@ private struct DeckEditorView: View {
         var physicalRequiredBySlug: [String: Int] = [:]
         var buildable = 0
         for entry in snapshot.entries {
-            if entry.zone == .rune {
+            if model.deckInventoryAvailability.isAlwaysAvailable(entry.zone) {
                 buildable += entry.quantity
             } else {
                 physicalRequiredBySlug[entry.nameSlug, default: 0] += entry.quantity
@@ -399,16 +401,33 @@ private struct DeckEditorView: View {
 }
 
 struct DeckNamingSheet: View {
+    private enum CreationSource: String, CaseIterable, Identifiable {
+        case empty
+        case location
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .empty: "Empty Deck"
+            case .location: "From Location"
+            }
+        }
+    }
+
     let request: DeckNamingRequest
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
+    @State private var creationSource: CreationSource = .empty
+    @State private var selectedLocationKey: String?
+    @State private var isWorking = false
     @FocusState private var nameFocused: Bool
 
     init(request: DeckNamingRequest, model: AppModel) {
         self.request = request
         self.model = model
         _name = State(initialValue: request.initialName)
+        _selectedLocationKey = State(initialValue: model.importableDeckLocations.first?.normalizedName)
     }
 
     var body: some View {
@@ -416,9 +435,38 @@ struct DeckNamingSheet: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(request.title)
                     .font(.title2.weight(.semibold))
-                Text(request.purpose == .create ? "Choose a name for the new deck." : "Choose a new name for this deck.")
+                Text(request.purpose == .create ? "Create an empty definition or reconstruct one from a CardNexus Deck location." : "Choose a new name for this deck.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            }
+
+            if request.purpose == .create {
+                Picker("Creation source", selection: $creationSource) {
+                    ForEach(CreationSource.allCases) { source in
+                        Text(source.title).tag(source)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if creationSource == .location {
+                    if model.importableDeckLocations.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Importable Deck Locations", systemImage: "rectangle.stack.badge.questionmark")
+                        } description: {
+                            Text("Classify a CardNexus location as Deck and leave it unlinked before importing it.")
+                        }
+                        .frame(minHeight: 130)
+                    } else {
+                        Picker("Deck location", selection: $selectedLocationKey) {
+                            ForEach(model.importableDeckLocations) { location in
+                                Text(location.displayName).tag(Optional(location.normalizedName))
+                            }
+                        }
+                        Text("Cards are assigned to deck zones and checked against constructed rules. Complete decks are assembled; incomplete but legally extendable subsets are created as pending decks.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             TextField("Deck name", text: $name)
@@ -433,29 +481,62 @@ struct DeckNamingSheet: View {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button(request.confirmationTitle) { commit() }
+                Button(confirmationTitle) { commit() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(trimmedName.isEmpty)
+                    .disabled(isWorking || trimmedName.isEmpty || (request.purpose == .create && creationSource == .location && selectedLocation == nil))
             }
         }
         .padding(24)
-        .frame(width: 430)
+        .frame(width: 520)
         .background { ThemedCardSurface(cornerRadius: 18, tintStrength: 0.075, shadowStrength: 0.12) }
         .padding(18)
-        .onAppear { nameFocused = true }
+        .onAppear {
+            if request.purpose == .create, selectedLocationKey == nil {
+                selectedLocationKey = model.importableDeckLocations.first?.normalizedName
+            }
+            nameFocused = true
+        }
+        .onChange(of: creationSource) { _, source in
+            guard source == .location, let location = selectedLocation else { return }
+            if trimmedName.isEmpty { name = location.displayName }
+        }
+        .onChange(of: selectedLocationKey) { oldKey, _ in
+            guard creationSource == .location, let location = selectedLocation else { return }
+            let oldLocationName = model.importableDeckLocations.first { $0.normalizedName == oldKey }?.displayName
+            if trimmedName.isEmpty || name == oldLocationName { name = location.displayName }
+        }
     }
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var selectedLocation: LocationPolicy? {
+        guard let selectedLocationKey else { return nil }
+        return model.importableDeckLocations.first { $0.normalizedName == selectedLocationKey }
+    }
+
+    private var confirmationTitle: String {
+        if request.purpose == .create, creationSource == .location { return isWorking ? "Importing…" : "Import and Link" }
+        return request.confirmationTitle
+    }
+
     private func commit() {
         guard !trimmedName.isEmpty else { return }
         let submittedName = trimmedName
+        isWorking = true
         Task {
-            await model.commitDeckName(submittedName, request: request)
-            dismiss()
+            if request.purpose == .create, creationSource == .location {
+                if let location = selectedLocation, await model.importDeck(from: location, named: submittedName) {
+                    model.deckNamingRequest = nil
+                    dismiss()
+                }
+            } else {
+                await model.commitDeckName(submittedName, request: request)
+                dismiss()
+            }
+            isWorking = false
         }
     }
 }
@@ -483,6 +564,7 @@ private struct DeckEntryRow: View {
     let entry: DeckEntry
     let identity: CardIdentity?
     let inventory: AppInventoryCard?
+    let isAlwaysAvailable: Bool
     let changeQuantity: (Int) -> Void
     let openCard: () -> Void
 
@@ -509,7 +591,7 @@ private struct DeckEntryRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Show details for \(identity?.displayName ?? entry.nameSlug)")
             Spacer()
-            if entry.zone == .rune {
+            if isAlwaysAvailable {
                 QuantityBadge(title: "Always available", value: entry.quantity, tint: .green)
             } else if let availability = inventory?.availability {
                 QuantityBadge(title: "Storage", value: availability.availableInStorage, tint: .green)
