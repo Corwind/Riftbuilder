@@ -126,6 +126,40 @@ enum RiftBuilderDatabaseSchema {
             }
         }
 
+        migrator.registerMigration("v3_deck_drafts") { db in
+            try db.create(table: "deck_draft") { table in
+                table.column("deck_id", .text).primaryKey().references("deck", onDelete: .cascade)
+                table.column("base_deck_updated_at", .text).notNull()
+                table.column("created_at", .text).notNull()
+                table.column("updated_at", .text).notNull()
+            }
+
+            try db.create(table: "deck_draft_entry") { table in
+                table.column("id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().references("deck_draft", column: "deck_id", onDelete: .cascade)
+                table.column("zone", .text).notNull()
+                table.column("name_slug", .text).notNull().references("card_identity", onDelete: .restrict)
+                table.column("quantity", .integer).notNull().check { $0 > 0 }
+                table.column("preferred_product_id", .integer).references("card_printing", onDelete: .setNull)
+                table.column("preferred_finish", .text)
+                table.column("preferred_language", .text)
+            }
+
+            try db.create(index: "idx_deck_draft_entry_deck", on: "deck_draft_entry", columns: ["deck_id"])
+            try db.create(index: "idx_deck_draft_entry_zone", on: "deck_draft_entry", columns: ["zone"])
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_deck_draft_entry_logical_unique
+                ON deck_draft_entry(
+                    deck_id,
+                    zone,
+                    name_slug,
+                    IFNULL(preferred_product_id, -1),
+                    IFNULL(preferred_finish, ''),
+                    IFNULL(preferred_language, '')
+                )
+                """)
+        }
+
         return migrator
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked Sendable {
-    private let databaseWriter: any DatabaseWriter
+    let databaseWriter: any DatabaseWriter
 
     public init(databaseWriter: any DatabaseWriter) throws {
         self.databaseWriter = databaseWriter
@@ -42,11 +42,15 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                   AND product_id NOT IN (
                       SELECT preferred_product_id FROM deck_entry WHERE preferred_product_id IS NOT NULL
                   )
+                  AND product_id NOT IN (
+                      SELECT preferred_product_id FROM deck_draft_entry WHERE preferred_product_id IS NOT NULL
+                  )
                 """)
             try db.execute(sql: """
                 DELETE FROM card_identity
                 WHERE name_slug NOT IN (SELECT name_slug FROM card_printing)
                   AND name_slug NOT IN (SELECT name_slug FROM deck_entry)
+                  AND name_slug NOT IN (SELECT name_slug FROM deck_draft_entry)
                 """)
             try db.execute(sql: "DROP TABLE incoming_product_ids")
             try Self.setMetadata("catalogue_checksum", value: checksum, in: db)
@@ -511,7 +515,7 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
     }
 }
 
-private extension GRDBRiftBuilderRepository {
+extension GRDBRiftBuilderRepository {
     static func identity(from printing: CardPrinting) -> CardIdentity {
         let attributes = printing.attributes
         return CardIdentity(
