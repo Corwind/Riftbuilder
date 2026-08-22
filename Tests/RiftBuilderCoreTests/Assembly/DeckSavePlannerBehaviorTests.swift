@@ -53,6 +53,82 @@ final class DeckSavePlannerBehaviorTests: XCTestCase {
         XCTAssertEqual(plan.movements.first?.destinationLocationName, "Box B")
     }
 
+    func testRemovedCardDefaultsToItsRememberedPreviousLocation() throws {
+        let fixture = SavePlanFixture(saved: [entry("ahri", quantity: 2)], draft: [entry("ahri", quantity: 1)])
+        let remembered = origin(deckID: fixtureDeckID, nameSlug: "ahri", productID: 1, location: "Box A", quantity: 1)
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("merged-deck-ahri", productID: 1, quantity: 2, location: "Deck Ezreal")]),
+            originLots: [remembered]
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.returnRoutes, [DeckReturnRoute(
+            key: DeckReturnRouteKey(requirement: DeckPhysicalRequirementKey(nameSlug: "ahri"), originLotID: remembered.id),
+            quantity: 1,
+            previousLocationName: "Box A",
+            destinationLocationName: "Box A"
+        )])
+        XCTAssertEqual(plan.movements.first?.destinationLocationName, "Box A")
+        XCTAssertEqual(plan.movements.first?.originLotID, remembered.id)
+    }
+
+    func testRememberedPreviousLocationCanBeOverridden() throws {
+        let requirement = DeckPhysicalRequirementKey(nameSlug: "ahri")
+        let fixture = SavePlanFixture(saved: [entry("ahri", quantity: 2)], draft: [entry("ahri", quantity: 1)])
+        let remembered = origin(deckID: fixtureDeckID, nameSlug: "ahri", productID: 1, location: "Box A", quantity: 1)
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 2, location: "Deck Ezreal")]),
+            destinations: [DeckRemovalDestination(requirement: requirement, originLotID: remembered.id, locationName: "Box B")],
+            originLots: [remembered]
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.returnRoutes.first?.previousLocationName, "Box A")
+        XCTAssertEqual(plan.returnRoutes.first?.destinationLocationName, "Box B")
+        XCTAssertEqual(plan.movements.first?.destinationLocationName, "Box B")
+        XCTAssertEqual(plan.movements.first?.originLotID, remembered.id)
+    }
+
+    func testMergedDeckLineIsSplitAcrossRememberedSourceLocations() throws {
+        let fixture = SavePlanFixture(saved: [entry("ahri", quantity: 2)], draft: [])
+        let boxA = origin(deckID: fixtureDeckID, id: UUID(uuidString: "00000000-0000-0000-0000-00000000000a")!, nameSlug: "ahri", productID: 1, location: "Box A", quantity: 1)
+        let boxB = origin(deckID: fixtureDeckID, id: UUID(uuidString: "00000000-0000-0000-0000-00000000000b")!, nameSlug: "ahri", productID: 1, location: "Box B", quantity: 1)
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("merged-deck-ahri", productID: 1, quantity: 2, location: "Deck Ezreal")]),
+            originLots: [boxB, boxA]
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.returnRoutes.map(\.destinationLocationName), ["Box A", "Box B"])
+        XCTAssertEqual(plan.movements.map(\.inventoryID), ["merged-deck-ahri", "merged-deck-ahri"])
+        XCTAssertEqual(plan.movements.map(\.destinationLocationName), ["Box A", "Box B"])
+        XCTAssertEqual(Set(plan.movements.compactMap(\.originLotID)), [boxA.id, boxB.id])
+    }
+
+    func testUnavailableRememberedLocationRequiresSelectableFallback() throws {
+        let requirement = DeckPhysicalRequirementKey(nameSlug: "ahri")
+        let fixture = SavePlanFixture(saved: [entry("ahri", quantity: 1)], draft: [])
+        let remembered = origin(deckID: fixtureDeckID, nameSlug: "ahri", productID: 1, location: "Trade", quantity: 1)
+        let inventory = fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal")])
+
+        let unresolved = try fixture.plan(inventory: inventory, originLots: [remembered])
+        XCTAssertFalse(unresolved.canApply)
+        XCTAssertEqual(unresolved.unresolvedReturnRoutes, [DeckReturnRouteKey(requirement: requirement, originLotID: remembered.id)])
+        XCTAssertEqual(unresolved.returnRoutes.first?.previousLocationName, "Trade")
+        XCTAssertNil(unresolved.returnRoutes.first?.destinationLocationName)
+
+        let resolved = try fixture.plan(
+            inventory: inventory,
+            destinations: [DeckRemovalDestination(requirement: requirement, originLotID: remembered.id, locationName: "Box B")],
+            originLots: [remembered]
+        )
+        XCTAssertTrue(resolved.canApply)
+        XCTAssertEqual(resolved.movements.first?.destinationLocationName, "Box B")
+    }
+
     func testOneSavePlanCanPickAdditionsAndReturnRemovals() throws {
         let fixture = SavePlanFixture(
             saved: [entry("ahri", quantity: 3)],
@@ -197,7 +273,7 @@ private struct SavePlanFixture {
         )
     }
 
-    func plan(inventory: AssemblyInventorySnapshot, destinations: [DeckRemovalDestination] = [], inventoryAvailability: DeckInventoryAvailability = DeckInventoryAvailability()) throws -> DeckSavePlan {
+    func plan(inventory: AssemblyInventorySnapshot, destinations: [DeckRemovalDestination] = [], inventoryAvailability: DeckInventoryAvailability = DeckInventoryAvailability(), originLots: [DeckCardOriginLot] = []) throws -> DeckSavePlan {
         try DeckSavePlanner().makePlan(DeckSavePlanRequest(
             planID: UUID(uuidString: "00000000-0000-0000-0000-000000000999")!,
             savedDeck: saved,
@@ -205,7 +281,8 @@ private struct SavePlanFixture {
             inventory: inventory,
             deckLocationName: "Deck Ezreal",
             removalDestinations: destinations,
-            inventoryAvailability: inventoryAvailability
+            inventoryAvailability: inventoryAvailability,
+            originLots: originLots
         ))
     }
 }
@@ -216,4 +293,19 @@ private func entry(_ slug: String, zone: DeckZone = .main, quantity: Int) -> Dec
 
 private func line(_ id: String, productID: Int64, finish: String = "normal", quantity: Int, location: String) -> InventoryLine {
     InventoryLine(inventoryID: id, productID: productID, finish: finish, language: "en", quantity: quantity, locationName: location, updatedAt: .distantPast)
+}
+
+private func origin(deckID: UUID, id: UUID = UUID(), nameSlug: String, productID: Int64, location: String, quantity: Int) -> DeckCardOriginLot {
+    DeckCardOriginLot(
+        id: id,
+        deckID: deckID,
+        nameSlug: nameSlug,
+        productID: productID,
+        finish: "normal",
+        language: "en",
+        previousLocationKey: InventoryLocation.normalize(location),
+        previousLocationName: location,
+        quantity: quantity,
+        createdAt: .distantPast
+    )
 }

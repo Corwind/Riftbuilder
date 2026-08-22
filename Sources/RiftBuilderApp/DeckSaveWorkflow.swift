@@ -69,6 +69,7 @@ extension LiveAppDataService {
         guard !DeckDraftDiff(savedEntries: saved.entries, draftEntries: draft.entries).isEmpty else { throw AppDeckSaveError.noChanges }
 
         var inventory = try await assemblyStore.assemblyInventorySnapshot()
+        let originLots = try await repository.deckCardOriginLots(deckID: deckID)
         var deckLocation = inventory.locationPolicies.first(where: { $0.kind == .deck && $0.linkedDeckID == deckID })
         if deckLocation == nil {
             let requestedName = "Deck: \(draft.deck.name)"
@@ -98,7 +99,8 @@ extension LiveAppDataService {
             inventory: inventory,
             deckLocationName: deckLocation.displayName,
             removalDestinations: removalDestinations,
-            inventoryAvailability: inventoryAvailability
+            inventoryAvailability: inventoryAvailability,
+            originLots: originLots
         ))
         let identities = draft.identities.merging(saved.identities) { current, _ in current }
         let movements = plan.movements.map { movement in
@@ -168,7 +170,7 @@ final class DeckSaveWorkflowModel {
     var proposal: AppDeckSaveProposal?
     var outcome: DeckSaveApplicationOutcome?
     var isPresented = false
-    var removalDestinations: [DeckPhysicalRequirementKey: String] = [:]
+    var removalDestinations: [DeckReturnRouteKey: String] = [:]
 
     private let service: any DeckSaveServicing
 
@@ -183,10 +185,17 @@ final class DeckSaveWorkflowModel {
         removalDestinations = [:]
         do {
             var proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: [], inventoryAvailability: appModel.deckInventoryAvailability)
-            let removals = proposal.requirements.filter { $0.result.direction == .outOfDeck }
-            if !removals.isEmpty {
-                guard let defaultLocation = proposal.storageLocations.first?.displayName else { throw AppDeckSaveError.noStorageForRemovals }
-                for removal in removals { removalDestinations[removal.result.requirement] = defaultLocation }
+            var requiresReplan = false
+            for route in proposal.plan.returnRoutes {
+                if let destination = route.destinationLocationName {
+                    removalDestinations[route.key] = destination
+                } else {
+                    guard let fallback = proposal.storageLocations.first?.displayName else { throw AppDeckSaveError.noStorageForRemovals }
+                    removalDestinations[route.key] = fallback
+                    requiresReplan = true
+                }
+            }
+            if requiresReplan {
                 proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues, inventoryAvailability: appModel.deckInventoryAvailability)
             }
             self.proposal = proposal
@@ -197,9 +206,9 @@ final class DeckSaveWorkflowModel {
         phase = .idle
     }
 
-    func setDestination(_ locationName: String, for requirement: DeckPhysicalRequirementKey, deckID: UUID?, appModel: AppModel) async {
+    func setDestination(_ locationName: String, for route: DeckReturnRouteKey, deckID: UUID?, appModel: AppModel) async {
         guard let deckID else { return }
-        removalDestinations[requirement] = locationName
+        removalDestinations[route] = locationName
         phase = .planning
         do {
             proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues, inventoryAvailability: appModel.deckInventoryAvailability)
@@ -235,7 +244,7 @@ final class DeckSaveWorkflowModel {
     }
 
     private var destinationValues: [DeckRemovalDestination] {
-        removalDestinations.map { DeckRemovalDestination(requirement: $0.key, locationName: $0.value) }
+        removalDestinations.map { DeckRemovalDestination(route: $0.key, locationName: $0.value) }
     }
 }
 
@@ -281,18 +290,23 @@ struct DeckSaveReviewView: View {
 
     @ViewBuilder
     private func removalDestinations(_ proposal: AppDeckSaveProposal) -> some View {
-        let removals = proposal.requirements.filter { $0.result.direction == .outOfDeck }
-        if !removals.isEmpty {
+        let routes = proposal.plan.returnRoutes
+        if !routes.isEmpty {
             GroupBox("Return removed cards") {
                 VStack(spacing: 10) {
-                    ForEach(removals) { item in
-                        HStack {
-                            Text("\(item.result.requested) × \(item.cardName)").fontWeight(.medium)
+                    ForEach(routes, id: \.key) { route in
+                        HStack(alignment: .center) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(route.quantity) × \(cardName(for: route.key.requirement, in: proposal))").fontWeight(.medium)
+                                Text(route.previousLocationName.map { "Previous location: \($0)" } ?? "Previous location was not recorded")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Picker("Destination", selection: Binding(
-                                get: { workflow.removalDestinations[item.result.requirement] ?? "" },
+                                get: { workflow.removalDestinations[route.key] ?? route.destinationLocationName ?? "" },
                                 set: { location in
-                                    Task { await workflow.setDestination(location, for: item.result.requirement, deckID: appModel.selectedDeckID, appModel: appModel) }
+                                    Task { await workflow.setDestination(location, for: route.key, deckID: appModel.selectedDeckID, appModel: appModel) }
                                 }
                             )) {
                                 ForEach(proposal.storageLocations) { location in Text(location.displayName).tag(location.displayName) }
@@ -305,6 +319,10 @@ struct DeckSaveReviewView: View {
                 .padding(.vertical, 6)
             }
         }
+    }
+
+    private func cardName(for requirement: DeckPhysicalRequirementKey, in proposal: AppDeckSaveProposal) -> String {
+        proposal.requirements.first { $0.result.requirement == requirement }?.cardName ?? requirement.nameSlug
     }
 
     @ViewBuilder

@@ -41,7 +41,9 @@ public struct DeckSavePlanner: Sendable {
         let changedRequirements = Set(savedQuantities.keys).union(draftQuantities.keys).filter {
             savedQuantities[$0, default: 0] != draftQuantities[$0, default: 0]
         }.sorted(by: Self.requirementLessThan)
-        let destinations = Dictionary(uniqueKeysWithValues: request.removalDestinations.map { ($0.requirement, $0.locationName.trimmingCharacters(in: .whitespacesAndNewlines)) })
+        let destinations = request.removalDestinations.reduce(into: [DeckReturnRouteKey: String]()) { result, destination in
+            result[DeckReturnRouteKey(requirement: destination.requirement, originLotID: destination.originLotID)] = destination.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         var storageLots: [Lot] = []
         var deckLots: [Lot] = []
@@ -57,8 +59,9 @@ public struct DeckSavePlanner: Sendable {
         }
 
         var allocations: [MovementAllocationKey: Int] = [:]
+        var originLots = request.originLots.filter { $0.deckID == deckID && $0.quantity > 0 }.map(OriginLot.init)
+        var routeAllocations: [DeckReturnRouteKey: ReturnRouteAllocation] = [:]
         var results: [DeckSaveRequirementResult] = []
-        var unresolved: [DeckPhysicalRequirementKey] = []
         for requirement in changedRequirements {
             let change = draftQuantities[requirement, default: 0] - savedQuantities[requirement, default: 0]
             if change > 0 {
@@ -71,23 +74,65 @@ public struct DeckSavePlanner: Sendable {
                 results.append(DeckSaveRequirementResult(requirement: requirement, direction: .intoDeck, requested: change, allocated: allocated, missing: remaining, destinationLocationName: deckLocation))
             } else {
                 let requested = -change
-                guard let destination = destinations[requirement], !destination.isEmpty else {
-                    unresolved.append(requirement)
-                    results.append(DeckSaveRequirementResult(requirement: requirement, direction: .outOfDeck, requested: requested, allocated: 0, missing: 0, destinationLocationName: nil))
-                    continue
-                }
-                let destinationKey = InventoryLocation.normalize(destination)
-                guard destinationKey != deckLocationKey else { throw DeckSavePlanningError.removalDestinationIsDeckLocation(destination) }
-                guard let destinationPolicy = policies[destinationKey], destinationPolicy.kind == .storage, destinationPolicy.countsAsAvailable else {
-                    throw DeckSavePlanningError.removalDestinationNotAvailableStorage(destination)
-                }
                 var remaining = requested
-                let allocated = consume(requirement: requirement, requested: &remaining, lots: &deckLots) { line in
-                    MovementAllocationKey(direction: .outOfDeck, inventoryID: line.inventoryID, destinationLocationName: destination)
-                } allocations: { key, quantity in
-                    allocations[key, default: 0] += quantity
+                let candidates = deckLots.indices.filter { deckLots[$0].remaining > 0 && deckLots[$0].nameSlug == requirement.nameSlug }.sorted {
+                    lotLessThan(deckLots[$0], deckLots[$1], preference: requirement.preference)
                 }
-                results.append(DeckSaveRequirementResult(requirement: requirement, direction: .outOfDeck, requested: requested, allocated: allocated, missing: remaining, destinationLocationName: destination))
+                var allocated = 0
+                for deckLotIndex in candidates where remaining > 0 {
+                    let quantity = min(remaining, deckLots[deckLotIndex].remaining)
+                    let line = deckLots[deckLotIndex].line
+                    deckLots[deckLotIndex].remaining -= quantity
+                    remaining -= quantity
+                    allocated += quantity
+
+                    var lineQuantityRemaining = quantity
+                    let matchingOrigins = originLots.indices.filter {
+                        originLots[$0].remaining > 0 && Self.origin(originLots[$0].lot, matches: line, nameSlug: requirement.nameSlug)
+                    }.sorted { Self.originLessThan(originLots[$0].lot, originLots[$1].lot) }
+                    for originIndex in matchingOrigins where lineQuantityRemaining > 0 {
+                        let originQuantity = min(lineQuantityRemaining, originLots[originIndex].remaining)
+                        originLots[originIndex].remaining -= originQuantity
+                        lineQuantityRemaining -= originQuantity
+                        let origin = originLots[originIndex].lot
+                        let routeKey = DeckReturnRouteKey(requirement: requirement, originLotID: origin.id)
+                        let destination = try returnDestination(
+                            route: routeKey,
+                            origin: origin,
+                            overrides: destinations,
+                            policies: policies,
+                            deckLocationKey: deckLocationKey
+                        )
+                        addRoute(routeKey, quantity: originQuantity, previousLocationName: origin.previousLocationName, destinationLocationName: destination, to: &routeAllocations)
+                        if let destination {
+                            allocations[MovementAllocationKey(direction: .outOfDeck, inventoryID: line.inventoryID, destinationLocationName: destination, originLotID: origin.id), default: 0] += originQuantity
+                        }
+                    }
+
+                    if lineQuantityRemaining > 0 {
+                        let routeKey = DeckReturnRouteKey(requirement: requirement, originLotID: nil)
+                        let destination = try returnDestination(
+                            route: routeKey,
+                            origin: nil,
+                            overrides: destinations,
+                            policies: policies,
+                            deckLocationKey: deckLocationKey
+                        )
+                        addRoute(routeKey, quantity: lineQuantityRemaining, previousLocationName: nil, destinationLocationName: destination, to: &routeAllocations)
+                        if let destination {
+                            allocations[MovementAllocationKey(direction: .outOfDeck, inventoryID: line.inventoryID, destinationLocationName: destination, originLotID: nil), default: 0] += lineQuantityRemaining
+                        }
+                    }
+                }
+                let requirementDestinations = Set(routeAllocations.values.filter { $0.key.requirement == requirement }.compactMap(\.destinationLocationName))
+                results.append(DeckSaveRequirementResult(
+                    requirement: requirement,
+                    direction: .outOfDeck,
+                    requested: requested,
+                    allocated: allocated,
+                    missing: remaining,
+                    destinationLocationName: requirementDestinations.count == 1 ? requirementDestinations.first : nil
+                ))
             }
         }
 
@@ -98,7 +143,8 @@ public struct DeckSavePlanner: Sendable {
             let rightSource = InventoryLocation.normalize(linesByID[rhs.key.inventoryID]?.locationName)
             if leftSource != rightSource { return leftSource < rightSource }
             if lhs.key.destinationLocationName != rhs.key.destinationLocationName { return lhs.key.destinationLocationName < rhs.key.destinationLocationName }
-            return lhs.key.inventoryID < rhs.key.inventoryID
+            if lhs.key.inventoryID != rhs.key.inventoryID { return lhs.key.inventoryID < rhs.key.inventoryID }
+            return (lhs.key.originLotID?.uuidString ?? "") < (rhs.key.originLotID?.uuidString ?? "")
         }
         let movements = sortedAllocations.enumerated().compactMap { index, allocation -> PlannedInventoryMovement? in
             guard let line = linesByID[allocation.key.inventoryID], let printing = request.inventory.printingsByProductID[line.productID] else { return nil }
@@ -111,9 +157,16 @@ public struct DeckSavePlanner: Sendable {
                 sourceLocationName: line.locationName,
                 destinationLocationName: allocation.key.destinationLocationName,
                 finish: line.finish,
-                language: line.language
+                language: line.language,
+                originLotID: allocation.key.originLotID
             )
         }
+
+        let returnRoutes = routeAllocations.values.sorted(by: Self.returnRouteLessThan).map {
+            DeckReturnRoute(key: $0.key, quantity: $0.quantity, previousLocationName: $0.previousLocationName, destinationLocationName: $0.destinationLocationName)
+        }
+        let unresolvedRoutes = returnRoutes.filter { $0.destinationLocationName == nil }.map(\.key)
+        let unresolvedRequirements = Array(Set(unresolvedRoutes.map(\.requirement))).sorted(by: Self.requirementLessThan)
 
         return DeckSavePlan(
             planID: request.planID,
@@ -121,7 +174,9 @@ public struct DeckSavePlanner: Sendable {
             deckLocationName: deckLocation,
             movements: movements,
             requirements: results,
-            unresolvedRemovalDestinations: unresolved
+            unresolvedRemovalDestinations: unresolvedRequirements,
+            returnRoutes: returnRoutes,
+            unresolvedReturnRoutes: unresolvedRoutes
         )
     }
 }
@@ -137,6 +192,31 @@ private extension DeckSavePlanner {
         let direction: DeckSaveMovementDirection
         let inventoryID: String
         let destinationLocationName: String
+        let originLotID: UUID?
+
+        init(direction: DeckSaveMovementDirection, inventoryID: String, destinationLocationName: String, originLotID: UUID? = nil) {
+            self.direction = direction
+            self.inventoryID = inventoryID
+            self.destinationLocationName = destinationLocationName
+            self.originLotID = originLotID
+        }
+    }
+
+    struct OriginLot {
+        let lot: DeckCardOriginLot
+        var remaining: Int
+
+        init(_ lot: DeckCardOriginLot) {
+            self.lot = lot
+            remaining = lot.quantity
+        }
+    }
+
+    struct ReturnRouteAllocation {
+        let key: DeckReturnRouteKey
+        var quantity: Int
+        let previousLocationName: String?
+        let destinationLocationName: String?
     }
 
     static func physicalQuantities(_ entries: [DeckEntry], availability: DeckInventoryAvailability) -> [DeckPhysicalRequirementKey: Int] {
@@ -192,5 +272,49 @@ private extension DeckSavePlanner {
 
     static func normalized(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
+
+    static func origin(_ origin: DeckCardOriginLot, matches line: InventoryLine, nameSlug: String) -> Bool {
+        origin.nameSlug == nameSlug
+            && origin.productID == line.productID
+            && normalized(origin.finish) == normalized(line.finish)
+            && normalized(origin.language) == normalized(line.language)
+    }
+
+    static func originLessThan(_ lhs: DeckCardOriginLot, _ rhs: DeckCardOriginLot) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        if lhs.previousLocationKey != rhs.previousLocationKey { return lhs.previousLocationKey < rhs.previousLocationKey }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    func returnDestination(route: DeckReturnRouteKey, origin: DeckCardOriginLot?, overrides: [DeckReturnRouteKey: String], policies: [String: LocationPolicy], deckLocationKey: String) throws -> String? {
+        if let override = overrides[route], !override.isEmpty {
+            let key = InventoryLocation.normalize(override)
+            guard key != deckLocationKey else { throw DeckSavePlanningError.removalDestinationIsDeckLocation(override) }
+            guard let policy = policies[key], policy.kind == .storage, policy.countsAsAvailable else {
+                throw DeckSavePlanningError.removalDestinationNotAvailableStorage(override)
+            }
+            return policy.displayName
+        }
+        guard let origin, origin.previousLocationKey != deckLocationKey,
+              let policy = policies[origin.previousLocationKey], policy.kind == .storage, policy.countsAsAvailable
+        else { return nil }
+        return policy.displayName
+    }
+
+    func addRoute(_ key: DeckReturnRouteKey, quantity: Int, previousLocationName: String?, destinationLocationName: String?, to routes: inout [DeckReturnRouteKey: ReturnRouteAllocation]) {
+        guard quantity > 0 else { return }
+        if var existing = routes[key] {
+            existing.quantity += quantity
+            routes[key] = existing
+        } else {
+            routes[key] = ReturnRouteAllocation(key: key, quantity: quantity, previousLocationName: previousLocationName, destinationLocationName: destinationLocationName)
+        }
+    }
+
+    static func returnRouteLessThan(_ lhs: ReturnRouteAllocation, _ rhs: ReturnRouteAllocation) -> Bool {
+        if requirementLessThan(lhs.key.requirement, rhs.key.requirement) { return true }
+        if requirementLessThan(rhs.key.requirement, lhs.key.requirement) { return false }
+        return (lhs.key.originLotID?.uuidString ?? "") < (rhs.key.originLotID?.uuidString ?? "")
     }
 }
