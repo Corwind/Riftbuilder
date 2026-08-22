@@ -93,9 +93,10 @@ extension TextDeckImportServicing {
         let deck = Deck(id: deckID, name: deckName, state: .planned)
         do {
             try await saveDeck(deck)
+            _ = try await beginDeckDraft(id: deckID)
             for entry in resolved.entries {
                 try Task.checkCancellation()
-                try await saveDeckEntry(entry)
+                try await saveDeckDraftEntry(entry)
             }
         } catch {
             try? await deleteDeck(id: deckID)

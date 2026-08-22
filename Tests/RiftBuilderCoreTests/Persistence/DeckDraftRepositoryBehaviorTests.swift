@@ -99,6 +99,24 @@ final class DeckDraftRepositoryBehaviorTests: XCTestCase {
         XCTAssertNil(draft)
         XCTAssertNil(saved)
     }
+
+    func testActiveDraftDrivesRequiredQuantityAndLegendDomainSummaries() async throws {
+        let repository = try await repositoryWithSavedDeck(quantity: 2)
+        let decks = try await repository.decks()
+        let deck = try XCTUnwrap(decks.first)
+        let startedValue = try await repository.beginDeckDraft(id: deck.id, at: date(20))
+        let started = try XCTUnwrap(startedValue)
+        var edited = try XCTUnwrap(started.entries.first)
+        edited.quantity = 5
+        try await repository.saveDeckDraftEntry(edited, at: date(30))
+        try await repository.saveDeckDraftEntry(DeckEntry(deckID: deck.id, zone: .legend, nameSlug: "ahri", quantity: 1), at: date(31))
+
+        let inventory = try await repository.inventoryCards(search: nil, targetDeckID: deck.id)
+        let domains = try await repository.deckLegendDomains()
+
+        XCTAssertEqual(inventory.first?.availability.required, 6)
+        XCTAssertEqual(domains[deck.id], ["calm"])
+    }
 }
 
 private func repositoryWithSavedDeck(quantity: Int) async throws -> GRDBRiftBuilderRepository {
@@ -110,7 +128,8 @@ private func repositoryWithSavedDeck(quantity: Int) async throws -> GRDBRiftBuil
             printingSlug: "ahri-one",
             displayName: "Ahri, Charmer",
             finishes: ["normal"],
-            languages: ["en"]
+            languages: ["en"],
+            attributes: ["domains": .array([.string("calm")])]
         )],
         checksum: "catalogue",
         completedAt: date(1)

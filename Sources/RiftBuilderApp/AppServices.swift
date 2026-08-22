@@ -13,6 +13,11 @@ protocol AppDataServicing: Sendable {
     func decks() async throws -> [Deck]
     func deckLegendDomains() async throws -> [UUID: [String]]
     func deckSnapshot(id: UUID) async throws -> DeckSnapshot?
+    func beginDeckDraft(id: UUID) async throws -> DeckDraftSnapshot?
+    func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot?
+    func saveDeckDraftEntry(_ entry: DeckEntry) async throws
+    func deleteDeckDraftEntry(id: UUID) async throws
+    func discardDeckDraft(id: UUID) async throws
     func saveDeck(_ deck: Deck) async throws
     func deleteDeck(id: UUID) async throws
     func saveDeckEntry(_ entry: DeckEntry) async throws
@@ -26,6 +31,7 @@ actor DemoAppDataService: AppDataServicing {
     private var policies: [LocationPolicy]
     private var storedDecks: [Deck]
     private var snapshots: [UUID: DeckSnapshot]
+    private var drafts: [UUID: DeckDraftSnapshot] = [:]
     private let cards: [AppInventoryCard]
 
     init() {
@@ -156,6 +162,41 @@ actor DemoAppDataService: AppDataServicing {
         return DeckSnapshot(deck: deck, entries: [], identities: [:])
     }
 
+    func beginDeckDraft(id: UUID) async throws -> DeckDraftSnapshot? {
+        if let draft = drafts[id] { return draft }
+        guard let saved = try await deckSnapshot(id: id) else { return nil }
+        let now = Date()
+        let draft = DeckDraftSnapshot(deck: saved.deck, entries: saved.entries, identities: saved.identities, baseDeckUpdatedAt: saved.deck.updatedAt, createdAt: now, updatedAt: now)
+        drafts[id] = draft
+        return draft
+    }
+
+    func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot? { drafts[id] }
+
+    func saveDeckDraftEntry(_ entry: DeckEntry) async throws {
+        guard let current = drafts[entry.deckID] else { return }
+        var entries = current.entries.filter { $0.id != entry.id }
+        if let match = entries.firstIndex(where: {
+            $0.zone == entry.zone && $0.nameSlug == entry.nameSlug && $0.preferredProductID == entry.preferredProductID
+                && $0.preferredFinish == entry.preferredFinish && $0.preferredLanguage == entry.preferredLanguage
+        }) {
+            entries[match].quantity += entry.quantity
+        } else {
+            entries.append(entry)
+        }
+        var identities = current.identities
+        if identities[entry.nameSlug] == nil, let identity = cards.first(where: { $0.id == entry.nameSlug })?.identity { identities[entry.nameSlug] = identity }
+        drafts[entry.deckID] = DeckDraftSnapshot(deck: current.deck, entries: entries, identities: identities, baseDeckUpdatedAt: current.baseDeckUpdatedAt, createdAt: current.createdAt, updatedAt: Date())
+    }
+
+    func deleteDeckDraftEntry(id: UUID) async throws {
+        guard let pair = drafts.first(where: { $0.value.entries.contains(where: { $0.id == id }) }) else { return }
+        let current = pair.value
+        drafts[pair.key] = DeckDraftSnapshot(deck: current.deck, entries: current.entries.filter { $0.id != id }, identities: current.identities, baseDeckUpdatedAt: current.baseDeckUpdatedAt, createdAt: current.createdAt, updatedAt: Date())
+    }
+
+    func discardDeckDraft(id: UUID) async throws { drafts[id] = nil }
+
     func saveDeck(_ deck: Deck) async throws {
         if let index = storedDecks.firstIndex(where: { $0.id == deck.id }) {
             storedDecks[index] = deck
@@ -169,6 +210,7 @@ actor DemoAppDataService: AppDataServicing {
     func deleteDeck(id: UUID) async throws {
         storedDecks.removeAll { $0.id == id }
         snapshots[id] = nil
+        drafts[id] = nil
     }
 
     func saveDeckEntry(_ entry: DeckEntry) async throws {

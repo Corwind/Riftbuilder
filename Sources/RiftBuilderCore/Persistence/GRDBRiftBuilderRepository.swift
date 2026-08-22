@@ -373,11 +373,18 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
     public func deckLegendDomains() async throws -> [UUID: [String]] {
         try await databaseWriter.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT de.deck_id, ci.domains_json
-                FROM deck_entry de
-                JOIN card_identity ci ON ci.name_slug = de.name_slug
-                WHERE de.zone = ?
-                ORDER BY de.deck_id, de.id
+                WITH effective_entry AS (
+                    SELECT deck_id, id, zone, name_slug FROM deck_draft_entry
+                    UNION ALL
+                    SELECT de.deck_id, de.id, de.zone, de.name_slug
+                    FROM deck_entry de
+                    WHERE NOT EXISTS (SELECT 1 FROM deck_draft dd WHERE dd.deck_id = de.deck_id)
+                )
+                SELECT ee.deck_id, ci.domains_json
+                FROM effective_entry ee
+                JOIN card_identity ci ON ci.name_slug = ee.name_slug
+                WHERE ee.zone = ?
+                ORDER BY ee.deck_id, ee.id
                 """, arguments: [DeckZone.legend.rawValue])
             var result: [UUID: [String]] = [:]
             for row in rows {
@@ -721,10 +728,16 @@ extension GRDBRiftBuilderRepository {
     static func requiredQuantity(nameSlug: String, targetDeckID: UUID?, in db: Database) throws -> Int {
         guard let targetDeckID else { return 0 }
         return try Int.fetchOne(db, sql: """
-            SELECT COALESCE(SUM(quantity), 0)
-            FROM deck_entry
-            WHERE deck_id = ? AND name_slug = ?
-            """, arguments: [targetDeckID.uuidString, nameSlug]) ?? 0
+            SELECT COALESCE(SUM(quantity), 0) FROM (
+                SELECT quantity, name_slug FROM deck_draft_entry
+                WHERE deck_id = ?
+                UNION ALL
+                SELECT quantity, name_slug FROM deck_entry
+                WHERE deck_id = ?
+                  AND NOT EXISTS (SELECT 1 FROM deck_draft WHERE deck_id = ?)
+            ) effective_entry
+            WHERE name_slug = ?
+            """, arguments: [targetDeckID.uuidString, targetDeckID.uuidString, targetDeckID.uuidString, nameSlug]) ?? 0
     }
 
     static func availability(from locations: [LocationQuantity], required: Int, targetDeckID: UUID?) -> CardAvailability {

@@ -119,6 +119,26 @@ actor LiveAppDataService: AppDataServicing {
         try await repository.deckSnapshot(id: id)
     }
 
+    func beginDeckDraft(id: UUID) async throws -> DeckDraftSnapshot? {
+        try await repository.beginDeckDraft(id: id)
+    }
+
+    func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot? {
+        try await repository.deckDraftSnapshot(id: id)
+    }
+
+    func saveDeckDraftEntry(_ entry: DeckEntry) async throws {
+        try await repository.saveDeckDraftEntry(entry)
+    }
+
+    func deleteDeckDraftEntry(id: UUID) async throws {
+        try await repository.deleteDeckDraftEntry(id: id)
+    }
+
+    func discardDeckDraft(id: UUID) async throws {
+        try await repository.discardDeckDraft(id: id)
+    }
+
     func saveDeck(_ deck: Deck) async throws {
         try await repository.saveDeck(deck)
     }
@@ -167,6 +187,11 @@ actor UnavailableAppDataService: AppDataServicing {
     func decks() async throws -> [Deck] { throw failure }
     func deckLegendDomains() async throws -> [UUID: [String]] { throw failure }
     func deckSnapshot(id: UUID) async throws -> DeckSnapshot? { throw failure }
+    func beginDeckDraft(id: UUID) async throws -> DeckDraftSnapshot? { throw failure }
+    func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot? { throw failure }
+    func saveDeckDraftEntry(_ entry: DeckEntry) async throws { throw failure }
+    func deleteDeckDraftEntry(id: UUID) async throws { throw failure }
+    func discardDeckDraft(id: UUID) async throws { throw failure }
     func saveDeck(_ deck: Deck) async throws { throw failure }
     func deleteDeck(id: UUID) async throws { throw failure }
     func saveDeckEntry(_ entry: DeckEntry) async throws { throw failure }

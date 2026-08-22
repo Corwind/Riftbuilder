@@ -174,7 +174,7 @@ final class AppModel {
             return
         }
         do {
-            selectedDeckSnapshot = try await service.deckSnapshot(id: selectedDeckID)
+            selectedDeckSnapshot = try await service.beginDeckDraft(id: selectedDeckID)?.deckSnapshot
             if let selectedDeckSnapshot {
                 validationIssues = await service.validationIssues(for: selectedDeckSnapshot)
                 let domains = selectedDeckSnapshot.entries
@@ -320,9 +320,9 @@ final class AppModel {
         changed.quantity += delta
         do {
             if changed.quantity <= 0 {
-                try await service.deleteDeckEntry(id: changed.id)
+                try await service.deleteDeckDraftEntry(id: changed.id)
             } else {
-                try await service.saveDeckEntry(changed)
+                try await service.saveDeckDraftEntry(changed)
             }
             await loadSelectedDeck()
         } catch {
@@ -351,7 +351,7 @@ final class AppModel {
             return
         }
         do {
-            try await service.saveDeckEntry(DeckEntry(deckID: deckID, zone: zone, nameSlug: card.id, quantity: 1))
+            try await service.saveDeckDraftEntry(DeckEntry(deckID: deckID, zone: zone, nameSlug: card.id, quantity: 1))
             isCardPickerPresented = false
             await loadSelectedDeck()
         } catch {
