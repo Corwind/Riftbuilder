@@ -172,7 +172,9 @@ private func makeValidDeck() -> RulesFixture {
         battlefieldCount: 3,
         maximumCopiesByName: 3,
         maximumSideboardCount: 10,
-        maximumSignatureCards: 3
+        maximumSignatureCards: 3,
+        bannedCards: ["called shot"],
+        bannedBattlefields: ["dreaming tree"]
     )
     return RulesFixture(snapshot: DeckSnapshot(deck: deck, entries: entries, identities: identities), ruleset: ruleset, identities: identities)
 }
