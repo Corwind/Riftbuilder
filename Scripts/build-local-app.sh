@@ -15,6 +15,13 @@ fi
 mkdir -p "$contents_path/MacOS" "$contents_path/Resources"
 install -m 755 "$binary_dir/RiftBuilder" "$contents_path/MacOS/RiftBuilder"
 install -m 644 "$project_dir/Support/Info.plist" "$contents_path/Info.plist"
+install -m 644 "$project_dir/Support/AppIcon/RiftBuilder.icns" "$contents_path/Resources/RiftBuilder.icns"
+
+for resource_bundle in "$binary_dir"/*.bundle; do
+    if [ -d "$resource_bundle" ]; then
+        ditto "$resource_bundle" "$contents_path/Resources/$(basename "$resource_bundle")"
+    fi
+done
 
 signing_identity=${RIFTBUILDER_SIGNING_IDENTITY:-"RiftBuilder Local Development"}
 login_keychain=$(security login-keychain | xargs)

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Report toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Validate release metadata
+        run: ./Scripts/validate-release.sh
+
+      - name: Validate new changelog release
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api --paginate "repos/$GH_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' | grep -Fxq CHANGELOG.md; then
+            version=$(./Scripts/validate-release.sh)
+            if gh api "repos/$GH_REPO/git/ref/tags/v$version" >/dev/null 2>&1; then
+              echo "Tag v$version already exists. Add a new SemVer release to CHANGELOG.md and update Support/Info.plist." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build
+        run: swift build --disable-sandbox
+
+      - name: Test
+        run: swift test --disable-sandbox --parallel
