@@ -9,7 +9,7 @@ actor LiveAppDataService: AppDataServicing {
     let repository: GRDBRiftBuilderRepository
     let assemblyStore: GRDBAssemblyStore
     let assemblyExecutor: AssemblyExecutor
-    private let ruleset: ConstructedRuleset
+    let ruleset: ConstructedRuleset
     private let defaults: UserDefaults
 
     init(

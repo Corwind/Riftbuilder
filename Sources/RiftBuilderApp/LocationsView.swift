@@ -4,6 +4,7 @@ import SwiftUI
 struct LocationsView: View {
     @Bindable var model: AppModel
     @State private var isCreatingLocation = false
+    @State private var importLocation: LocationPolicy?
 
     var body: some View {
         Group {
@@ -28,7 +29,9 @@ struct LocationsView: View {
                         LazyVStack(spacing: 12) {
                             locationSummary
                             ForEach(model.locations) { policy in
-                                LocationPolicyRow(policy: policy, model: model)
+                                LocationPolicyRow(policy: policy, model: model) {
+                                    importLocation = policy
+                                }
                             }
                         }
                         .padding()
@@ -53,6 +56,9 @@ struct LocationsView: View {
         .sheet(isPresented: $isCreatingLocation) {
             CreateLocationView(model: model)
         }
+        .sheet(item: $importLocation) { location in
+            ImportDeckFromLocationView(location: location, model: model)
+        }
     }
 
     private var locationSummary: some View {
@@ -73,6 +79,7 @@ struct LocationsView: View {
 private struct LocationPolicyRow: View {
     let policy: LocationPolicy
     @Bindable var model: AppModel
+    let importDeck: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -106,10 +113,60 @@ private struct LocationPolicyRow: View {
                     ForEach(model.linkableDecks(for: policy)) { deck in Text(deck.name).tag(Optional(deck.id)) }
                 }
                 .frame(width: 170)
+                if policy.linkedDeckID == nil {
+                    Button("Import Deck", action: importDeck)
+                        .buttonStyle(.borderedProminent)
+                        .help("Create a legal deck definition from cards in this location")
+                }
             }
         }
         .padding(14)
         .background { ThemedCardSurface(cornerRadius: 12, tintStrength: 0.055, shadowStrength: 0.07) }
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ImportDeckFromLocationView: View {
+    let location: LocationPolicy
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var deckName: String
+    @State private var isImporting = false
+
+    init(location: LocationPolicy, model: AppModel) {
+        self.location = location
+        self.model = model
+        _deckName = State(initialValue: location.displayName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Import Deck from Location").font(.title2.weight(.semibold))
+                Text(location.displayName).foregroundStyle(.secondary)
+            }
+            TextField("Deck name", text: $deckName)
+                .textFieldStyle(.roundedBorder)
+            Text("RiftBuilder infers zones from the scanned cards, validates the complete constructed deck, and only then saves it and links this location. If the inferred definition is illegal, nothing is changed.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(isImporting ? "Importing…" : "Import and Link") {
+                    isImporting = true
+                    Task {
+                        if await model.importDeck(from: location, named: deckName) { dismiss() }
+                        isImporting = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isImporting || deckName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
     }
 }
