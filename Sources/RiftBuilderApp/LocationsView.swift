@@ -149,7 +149,7 @@ private struct ImportDeckFromLocationView: View {
             }
             TextField("Deck name", text: $deckName)
                 .textFieldStyle(.roundedBorder)
-            Text("RiftBuilder infers zones from the scanned cards, validates the complete constructed deck, and only then saves it and links this location. If the inferred definition is illegal, nothing is changed.")
+            Text("RiftBuilder infers zones from the scanned cards. A complete legal deck is imported as assembled; an incomplete but legally extendable subset is imported as pending. Structurally illegal contents are rejected without saving or linking anything.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             HStack {

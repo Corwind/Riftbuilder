@@ -42,16 +42,24 @@ public struct DeckLocationImportRequest: Sendable {
     }
 }
 
+public enum DeckLocationImportDisposition: String, Codable, Hashable, Sendable {
+    case legal
+    case pending
+    case invalid
+}
+
 public struct DeckLocationImportResult: Sendable {
     public let snapshot: DeckSnapshot
     public let validationIssues: [DeckValidationIssue]
+    public let disposition: DeckLocationImportDisposition
 
-    public init(snapshot: DeckSnapshot, validationIssues: [DeckValidationIssue]) {
+    public init(snapshot: DeckSnapshot, validationIssues: [DeckValidationIssue], disposition: DeckLocationImportDisposition) {
         self.snapshot = snapshot
         self.validationIssues = validationIssues
+        self.disposition = disposition
     }
 
-    public var canSave: Bool { !validationIssues.contains { $0.severity == .error } }
+    public var canSave: Bool { disposition != .invalid }
 }
 
 /// Reconstructs a deterministic deck definition from physical inventory in one
@@ -110,7 +118,10 @@ public struct DeckLocationImporter: Sendable {
             ordinaryLots[championIndex].quantity -= 1
         }
 
-        var mainSlots = max(0, request.ruleset.mainDeckCount - (championIndex == nil ? 0 : 1))
+        // Always reserve the chosen-champion slot. Without a scanned champion,
+        // the inferred definition remains a true subset that can be completed by
+        // adding one, instead of requiring a main-deck card to be removed first.
+        var mainSlots = max(0, request.ruleset.mainDeckCount - 1)
         for lot in ordinaryLots where lot.quantity > 0 {
             let mainQuantity = min(mainSlots, lot.quantity)
             append(lot: lot, quantity: mainQuantity, zone: .main, deckID: request.deckID, to: &entries)
@@ -118,16 +129,31 @@ public struct DeckLocationImporter: Sendable {
             append(lot: lot, quantity: lot.quantity - mainQuantity, zone: .sideboard, deckID: request.deckID, to: &entries)
         }
 
-        let deck = Deck(
+        let provisionalDeck = Deck(
             id: request.deckID,
             name: request.deckName.trimmingCharacters(in: .whitespacesAndNewlines),
-            state: .assembled,
+            state: .planned,
             rulesetID: request.ruleset.id,
             createdAt: request.createdAt,
             updatedAt: request.createdAt
         )
-        let snapshot = DeckSnapshot(deck: deck, entries: entries, identities: request.identities)
-        return DeckLocationImportResult(snapshot: snapshot, validationIssues: DeckRulesEngine.validate(snapshot: snapshot, ruleset: request.ruleset))
+        let provisionalSnapshot = DeckSnapshot(deck: provisionalDeck, entries: entries, identities: request.identities)
+        let issues = DeckRulesEngine.validate(snapshot: provisionalSnapshot, ruleset: request.ruleset)
+        let disposition: DeckLocationImportDisposition
+        if !issues.contains(where: { $0.severity == .error }) {
+            disposition = .legal
+        } else if Self.isCompletableSubset(entries: entries, issues: issues, ruleset: request.ruleset) {
+            disposition = .pending
+        } else {
+            disposition = .invalid
+        }
+        var deck = provisionalDeck
+        deck.state = disposition == .legal ? .assembled : .planned
+        return DeckLocationImportResult(
+            snapshot: DeckSnapshot(deck: deck, entries: entries, identities: request.identities),
+            validationIssues: issues,
+            disposition: disposition
+        )
     }
 }
 
@@ -170,5 +196,34 @@ private extension DeckLocationImporter {
         if lhs.productID != rhs.productID { return lhs.productID < rhs.productID }
         if lhs.finish != rhs.finish { return lhs.finish < rhs.finish }
         return (lhs.language ?? "") < (rhs.language ?? "")
+    }
+
+    static func isCompletableSubset(entries: [DeckEntry], issues: [DeckValidationIssue], ruleset: ConstructedRuleset) -> Bool {
+        let allowedIncompleteCodes: Set<String> = [
+            "main_deck_count",
+            "legend_count",
+            "chosen_champion_count",
+            "rune_count",
+            "battlefield_count",
+            "battlefield_uniqueness",
+        ]
+        let errorCodes = Set(issues.filter { $0.severity == .error }.map(\.code))
+        guard errorCodes.isSubset(of: allowedIncompleteCodes) else { return false }
+
+        let mainCount = entries.filter { $0.zone == .main || $0.zone == .chosenChampion }.reduce(0) { $0 + $1.quantity }
+        let legendCount = entries.filter { $0.zone == .legend }.reduce(0) { $0 + $1.quantity }
+        let championCount = entries.filter { $0.zone == .chosenChampion }.reduce(0) { $0 + $1.quantity }
+        let runeCount = entries.filter { $0.zone == .rune }.reduce(0) { $0 + $1.quantity }
+        let battlefields = entries.filter { $0.zone == .battlefield }
+        let battlefieldCount = battlefields.reduce(0) { $0 + $1.quantity }
+        let battlefieldsAreUniqueSingles = battlefields.allSatisfy { $0.quantity == 1 }
+            && Set(battlefields.map(\.nameSlug)).count == battlefields.count
+
+        return mainCount <= ruleset.mainDeckCount
+            && legendCount <= 1
+            && championCount <= 1
+            && runeCount <= ruleset.runeCount
+            && battlefieldCount <= ruleset.battlefieldCount
+            && battlefieldsAreUniqueSingles
     }
 }

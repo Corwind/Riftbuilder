@@ -67,7 +67,11 @@ extension AppModel {
             selectedDeckID = snapshot.deck.id
             destination = .decks
             await loadSelectedDeck()
-            notice = "Imported \(snapshot.deck.name) and linked it to \(location.displayName)."
+            if snapshot.deck.state == .assembled {
+                notice = "Imported \(snapshot.deck.name) and linked it to \(location.displayName)."
+            } else {
+                notice = "Imported \(snapshot.deck.name) as a pending deck and linked it to \(location.displayName). Complete the missing requirements in the deck editor."
+            }
             return true
         } catch {
             notice = error.localizedDescription

@@ -22,6 +22,8 @@ final class DeckLocationImporterTests: XCTestCase {
         ))
 
         XCTAssertTrue(first.canSave)
+        XCTAssertEqual(first.disposition, .legal)
+        XCTAssertEqual(first.snapshot.deck.state, .assembled)
         XCTAssertFalse(first.validationIssues.contains { $0.severity == .error })
         XCTAssertEqual(quantity(in: .legend, entries: first.snapshot.entries), 1)
         XCTAssertEqual(quantity(in: .chosenChampion, entries: first.snapshot.entries), 1)
@@ -60,7 +62,7 @@ final class DeckLocationImporterTests: XCTestCase {
         }
     }
 
-    func testIllegalInferenceIsReportedInsteadOfBeingSaveable() throws {
+    func testIncompleteButCompletableInferenceBecomesPending() throws {
         let fixture = importFixture()
         let inventoryWithoutBattlefields = AssemblyInventorySnapshot(
             lines: fixture.request.inventory.lines.filter { line in
@@ -79,8 +81,68 @@ final class DeckLocationImporterTests: XCTestCase {
             ruleset: fixture.request.ruleset
         ))
 
-        XCTAssertFalse(result.canSave)
+        XCTAssertTrue(result.canSave)
+        XCTAssertEqual(result.disposition, .pending)
+        XCTAssertEqual(result.snapshot.deck.state, .planned)
         XCTAssertTrue(result.validationIssues.contains { $0.code == "battlefield_count" && $0.severity == .error })
+    }
+
+    func testStructuralViolationCannotBeImportedAsPending() throws {
+        let fixture = importFixture()
+        var lines = fixture.request.inventory.lines
+        let repeatedCardIndex = try XCTUnwrap(lines.firstIndex { line in
+            fixture.request.inventory.printingsByProductID[line.productID]?.nameSlug == "main-1"
+        })
+        let original = lines[repeatedCardIndex]
+        lines[repeatedCardIndex] = InventoryLine(
+            inventoryID: original.inventoryID,
+            productID: original.productID,
+            finish: original.finish,
+            language: original.language,
+            quantity: 4,
+            locationName: original.locationName,
+            updatedAt: original.updatedAt
+        )
+        let result = try DeckLocationImporter().makeCandidate(DeckLocationImportRequest(
+            deckID: fixture.request.deckID,
+            deckName: fixture.request.deckName,
+            location: fixture.request.location,
+            inventory: AssemblyInventorySnapshot(
+                lines: lines,
+                printingsByProductID: fixture.request.inventory.printingsByProductID,
+                locationPolicies: fixture.request.inventory.locationPolicies
+            ),
+            identities: fixture.request.identities,
+            ruleset: fixture.request.ruleset
+        ))
+
+        XCTAssertFalse(result.canSave)
+        XCTAssertEqual(result.disposition, .invalid)
+        XCTAssertTrue(result.validationIssues.contains { $0.code == "copy_limit" && $0.severity == .error })
+    }
+
+    func testMissingChampionLeavesACompletableThirtyNineCardMainDeck() throws {
+        let fixture = importFixture()
+        let inventoryWithoutChampion = AssemblyInventorySnapshot(
+            lines: fixture.request.inventory.lines.filter { line in
+                fixture.request.inventory.printingsByProductID[line.productID]?.nameSlug != "chosen-champion"
+            },
+            printingsByProductID: fixture.request.inventory.printingsByProductID,
+            locationPolicies: fixture.request.inventory.locationPolicies
+        )
+        let result = try DeckLocationImporter().makeCandidate(DeckLocationImportRequest(
+            deckID: fixture.request.deckID,
+            deckName: fixture.request.deckName,
+            location: fixture.request.location,
+            inventory: inventoryWithoutChampion,
+            identities: fixture.request.identities,
+            ruleset: fixture.request.ruleset
+        ))
+
+        XCTAssertEqual(result.disposition, .pending)
+        XCTAssertEqual(quantity(in: .chosenChampion, entries: result.snapshot.entries), 0)
+        XCTAssertEqual(quantity(in: .main, entries: result.snapshot.entries), 39)
+        XCTAssertTrue(result.canSave)
     }
 }
 

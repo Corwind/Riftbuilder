@@ -462,7 +462,7 @@ struct DeckNamingSheet: View {
                                 Text(location.displayName).tag(Optional(location.normalizedName))
                             }
                         }
-                        Text("Cards in the selected location are assigned to deck zones and checked against the complete constructed rules before anything is saved or linked.")
+                        Text("Cards are assigned to deck zones and checked against constructed rules. Complete decks are assembled; incomplete but legally extendable subsets are created as pending decks.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
