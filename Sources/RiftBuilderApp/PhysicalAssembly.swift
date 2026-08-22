@@ -428,7 +428,7 @@ struct DisassemblyDestinationView: View {
     }
 }
 
-private extension AssemblyMovementStatus {
+extension AssemblyMovementStatus {
     var appSystemImage: String {
         switch self {
         case .succeeded: "checkmark.circle.fill"

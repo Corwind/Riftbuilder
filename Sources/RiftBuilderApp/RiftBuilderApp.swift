@@ -7,10 +7,11 @@ struct RiftBuilderApp: App {
     @State private var deckTransfer: DeckTransferModel
     @State private var textDeckImport: TextDeckImportModel
     @State private var physicalAssembly: PhysicalAssemblyModel
+    @State private var deckSave: DeckSaveWorkflowModel
     @State private var theme: AppTheme
 
     init() {
-        let service: any TextDeckImportServicing & PhysicalAssemblyServicing
+        let service: any TextDeckImportServicing & PhysicalAssemblyServicing & DeckSaveServicing
         do {
             service = try LiveAppDataService()
         } catch {
@@ -20,6 +21,7 @@ struct RiftBuilderApp: App {
         _deckTransfer = State(initialValue: DeckTransferModel(service: service))
         _textDeckImport = State(initialValue: TextDeckImportModel(service: service))
         _physicalAssembly = State(initialValue: PhysicalAssemblyModel(service: service))
+        _deckSave = State(initialValue: DeckSaveWorkflowModel(service: service))
         _theme = State(initialValue: AppTheme())
     }
 
@@ -28,6 +30,7 @@ struct RiftBuilderApp: App {
             AppShellView(model: model, deckTransfer: deckTransfer)
                 .modifier(TextDeckImportHost(workflow: textDeckImport, appModel: model))
                 .modifier(PhysicalAssemblyHost(workflow: physicalAssembly, appModel: model))
+                .modifier(DeckSaveWorkflowHost(workflow: deckSave, appModel: model))
                 .environment(theme)
                 .background {
                     WindowAppearanceBridge(
