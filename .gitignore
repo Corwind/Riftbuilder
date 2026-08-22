@@ -1,0 +1,28 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+Secrets.plist
+Local.xcconfig
+
+# Local application data
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log

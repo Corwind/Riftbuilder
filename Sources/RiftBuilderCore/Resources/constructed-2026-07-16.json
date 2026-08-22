@@ -1,0 +1,14 @@
+{
+  "id": "constructed-2026-07-16",
+  "name": "Constructed",
+  "effectiveDate": "2026-07-16",
+  "sourceURL": "https://playriftbound.com/en-us/rules-hub/",
+  "mainDeckCount": 40,
+  "runeCount": 12,
+  "battlefieldCount": 3,
+  "maximumCopiesByName": 3,
+  "maximumSideboardCount": 10,
+  "maximumSignatureCards": 3,
+  "bannedCards": ["Called Shot", "Draven, Vanquisher", "Fight or Flight", "Scrapheap", "Stealthy Pursuer"],
+  "bannedBattlefields": ["The Arena’s Greatest", "Aspirant’s Climb", "Dreaming Tree", "Obelisk of Power", "Reaver’s Row"]
+}
