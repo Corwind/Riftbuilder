@@ -123,6 +123,20 @@ final class DeckSaveOperationRepositoryBehaviorTests: XCTestCase {
         let remaining = try XCTUnwrap(remainingLots.first)
         XCTAssertEqual(remaining.previousLocationName, "Box A", "Changing the return destination must not rewrite the remembered origin")
         XCTAssertEqual(remaining.quantity, 1)
+
+        try await repository.consumeDeckCardOrigins(deckID: deck.id, movements: [PlannedInventoryMovement(
+            operationID: "disband",
+            inventoryID: "deck-line-after-merge",
+            productID: 1,
+            nameSlug: "ahri",
+            quantity: 1,
+            sourceLocationName: "Deck",
+            destinationLocationName: "Box A",
+            finish: "foil",
+            language: "en",
+            originLotID: remaining.id
+        )])
+        XCTAssertTrue(try await repository.deckCardOriginLots(deckID: deck.id).isEmpty)
     }
 }
 

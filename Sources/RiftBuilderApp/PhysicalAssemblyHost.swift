@@ -22,16 +22,13 @@ struct PhysicalAssemblyHost: ViewModifier {
                         } label: {
                             Label("Disassemble", systemImage: "shippingbox.and.arrow.forward")
                         }
-                        .help("Move this deck's physical cards to an explicit storage location")
+                        .help("Return this deck's physical cards to their previous storage locations")
                         .disabled(workflow.phase != .idle)
                     }
                 }
             }
             .sheet(isPresented: $workflow.isConfirmationPresented) {
                 PhysicalAssemblyConfirmationView(workflow: workflow, appModel: appModel)
-            }
-            .sheet(isPresented: $workflow.isStoragePickerPresented) {
-                DisassemblyDestinationView(workflow: workflow, deckID: appModel.selectedDeckID, appModel: appModel)
             }
     }
 }

@@ -11,6 +11,15 @@ public extension GRDBRiftBuilderRepository {
                 """, arguments: [deckID.uuidString]).map(Self.deckCardOriginLot(from:))
         }
     }
+
+    func consumeDeckCardOrigins(deckID: UUID, movements: [PlannedInventoryMovement]) async throws {
+        try await databaseWriter.write { db in
+            for movement in movements where movement.quantity > 0 {
+                guard let originLotID = movement.originLotID else { continue }
+                try Self.consumeOrigin(id: originLotID, quantity: movement.quantity, in: db)
+            }
+        }
+    }
 }
 
 extension GRDBRiftBuilderRepository {
