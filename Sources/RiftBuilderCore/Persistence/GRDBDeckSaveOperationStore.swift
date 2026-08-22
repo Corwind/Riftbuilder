@@ -72,6 +72,17 @@ extension GRDBRiftBuilderRepository: DeckSaveOperationStoring {
             let reviewedDraftUpdatedAt: String = operation["draft_updated_at"]
             guard draftUpdatedAtValue == reviewedDraftUpdatedAt else { throw DeckSaveOperationStoreError.draftChanged(deckID) }
 
+            let plan = try PersistenceCoding.decode(DeckSavePlan.self, from: operation["plan_json"])
+            let deckLocationKey = InventoryLocation.normalize(plan.deckLocationName)
+            for movement in plan.movements where InventoryLocation.normalize(movement.sourceLocationName) == deckLocationKey {
+                if let originLotID = movement.originLotID {
+                    try Self.consumeOrigin(id: originLotID, quantity: movement.quantity, in: db)
+                }
+            }
+            for movement in plan.movements where InventoryLocation.normalize(movement.destinationLocationName) == deckLocationKey {
+                try Self.recordOrigin(for: movement, deckID: deckID, at: date, in: db)
+            }
+
             try db.execute(sql: "DELETE FROM deck_entry WHERE deck_id = ?", arguments: [deckID.uuidString])
             try db.execute(sql: """
                 INSERT INTO deck_entry (

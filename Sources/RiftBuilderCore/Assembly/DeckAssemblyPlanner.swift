@@ -115,7 +115,9 @@ public struct DeckAssemblyPlanner: Sendable {
                 nameSlug: printing.nameSlug,
                 quantity: quantity,
                 sourceLocationName: line.locationName,
-                destinationLocationName: destination
+                destinationLocationName: destination,
+                finish: line.finish,
+                language: line.language
             )
         }.sorted(by: Self.movementLessThan)
 

@@ -99,7 +99,9 @@ public struct DeckDisassemblyPlanner: Sendable {
                 nameSlug: printing.nameSlug,
                 quantity: line.quantity,
                 sourceLocationName: line.locationName,
-                destinationLocationName: destination
+                destinationLocationName: destination,
+                finish: line.finish,
+                language: line.language
             )
         }.sorted {
             if $0.nameSlug != $1.nameSlug { return $0.nameSlug < $1.nameSlug }

@@ -44,6 +44,7 @@ public protocol RiftBuilderRepository: Sendable {
     func decks() async throws -> [Deck]
     func deckLegendDomains() async throws -> [UUID: [String]]
     func deckSnapshot(id: UUID) async throws -> DeckSnapshot?
+    func deckCardOriginLots(deckID: UUID) async throws -> [DeckCardOriginLot]
     func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot?
     func beginDeckDraft(id: UUID, at date: Date) async throws -> DeckDraftSnapshot?
     func saveDeckDraftEntry(_ entry: DeckEntry, at date: Date) async throws

@@ -77,8 +77,11 @@ public struct PlannedInventoryMovement: Codable, Hashable, Identifiable, Sendabl
     public let quantity: Int
     public let sourceLocationName: String?
     public let destinationLocationName: String
+    public let finish: String?
+    public let language: String?
+    public let originLotID: UUID?
 
-    public init(operationID: String, inventoryID: String, productID: Int64, nameSlug: String, quantity: Int, sourceLocationName: String?, destinationLocationName: String) {
+    public init(operationID: String, inventoryID: String, productID: Int64, nameSlug: String, quantity: Int, sourceLocationName: String?, destinationLocationName: String, finish: String? = nil, language: String? = nil, originLotID: UUID? = nil) {
         self.operationID = operationID
         self.inventoryID = inventoryID
         self.productID = productID
@@ -86,6 +89,9 @@ public struct PlannedInventoryMovement: Codable, Hashable, Identifiable, Sendabl
         self.quantity = quantity
         self.sourceLocationName = sourceLocationName
         self.destinationLocationName = destinationLocationName
+        self.finish = finish
+        self.language = language
+        self.originLotID = originLotID
     }
 }
 

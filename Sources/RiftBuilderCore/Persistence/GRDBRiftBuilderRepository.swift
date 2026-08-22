@@ -45,12 +45,14 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                   AND product_id NOT IN (
                       SELECT preferred_product_id FROM deck_draft_entry WHERE preferred_product_id IS NOT NULL
                   )
+                  AND product_id NOT IN (SELECT product_id FROM deck_card_origin)
                 """)
             try db.execute(sql: """
                 DELETE FROM card_identity
                 WHERE name_slug NOT IN (SELECT name_slug FROM card_printing)
                   AND name_slug NOT IN (SELECT name_slug FROM deck_entry)
                   AND name_slug NOT IN (SELECT name_slug FROM deck_draft_entry)
+                  AND name_slug NOT IN (SELECT name_slug FROM deck_card_origin)
                 """)
             try db.execute(sql: "DROP TABLE incoming_product_ids")
             try Self.setMetadata("catalogue_checksum", value: checksum, in: db)

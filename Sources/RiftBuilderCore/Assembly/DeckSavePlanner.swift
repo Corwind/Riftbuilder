@@ -109,7 +109,9 @@ public struct DeckSavePlanner: Sendable {
                 nameSlug: printing.nameSlug,
                 quantity: allocation.value,
                 sourceLocationName: line.locationName,
-                destinationLocationName: allocation.key.destinationLocationName
+                destinationLocationName: allocation.key.destinationLocationName,
+                finish: line.finish,
+                language: line.language
             )
         }
 

@@ -170,6 +170,34 @@ enum RiftBuilderDatabaseSchema {
             }
         }
 
+        migrator.registerMigration("v5_deck_card_origins") { db in
+            try db.create(table: "deck_card_origin") { table in
+                table.column("id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().references("deck", onDelete: .cascade)
+                table.column("name_slug", .text).notNull().references("card_identity", onDelete: .restrict)
+                table.column("product_id", .integer).notNull().references("card_printing", onDelete: .restrict)
+                table.column("finish", .text).notNull()
+                table.column("language", .text)
+                table.column("previous_location_key", .text).notNull()
+                table.column("previous_location_name", .text)
+                table.column("quantity", .integer).notNull().check { $0 > 0 }
+                table.column("created_at", .text).notNull()
+            }
+            try db.create(index: "idx_deck_card_origin_deck", on: "deck_card_origin", columns: ["deck_id"])
+            try db.create(index: "idx_deck_card_origin_card", on: "deck_card_origin", columns: ["deck_id", "name_slug", "product_id"])
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX idx_deck_card_origin_lot_unique
+                ON deck_card_origin(
+                    deck_id,
+                    name_slug,
+                    product_id,
+                    finish,
+                    IFNULL(language, ''),
+                    previous_location_key
+                )
+                """)
+        }
+
         return migrator
     }
 }

@@ -53,6 +53,77 @@ final class DeckSaveOperationRepositoryBehaviorTests: XCTestCase {
         XCTAssertNil(clearedDraft)
         XCTAssertNil(clearedOperation)
     }
+
+    func testFinalizedAdditionsRememberOriginAndFinalizedRemovalConsumesItEvenWithOverride() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        try await repository.replaceCatalogue(
+            printings: [CardPrinting(productID: 1, nameSlug: "ahri", printingSlug: "ahri", displayName: "Ahri", finishes: ["foil"], languages: ["en"])],
+            checksum: "catalogue",
+            completedAt: .distantPast
+        )
+        let deck = Deck(name: "Deck")
+        try await repository.saveDeck(deck)
+        _ = try await repository.beginDeckDraft(id: deck.id, at: Date(timeIntervalSince1970: 10))
+        try await repository.saveDeckDraftEntry(
+            DeckEntry(deckID: deck.id, zone: .main, nameSlug: "ahri", quantity: 2),
+            at: Date(timeIntervalSince1970: 11)
+        )
+        let firstDraftValue = try await repository.deckDraftSnapshot(id: deck.id)
+        let firstDraft = try XCTUnwrap(firstDraftValue)
+        let addition = PlannedInventoryMovement(
+            operationID: "add",
+            inventoryID: "box-line",
+            productID: 1,
+            nameSlug: "ahri",
+            quantity: 2,
+            sourceLocationName: "Box A",
+            destinationLocationName: "Deck",
+            finish: "foil",
+            language: "en"
+        )
+        let firstPlan = DeckSavePlan(planID: UUID(), deckID: deck.id, deckLocationName: "Deck", movements: [addition], requirements: [], unresolvedRemovalDestinations: [])
+        let firstOperation = DeckSaveOperation(plan: firstPlan, draftUpdatedAt: firstDraft.updatedAt)
+        try await repository.saveDeckSaveOperation(firstOperation)
+        _ = try await repository.finalizeDeckSaveOperation(deckID: deck.id, operationID: firstOperation.id, at: Date(timeIntervalSince1970: 12))
+
+        let rememberedLots = try await repository.deckCardOriginLots(deckID: deck.id)
+        let remembered = try XCTUnwrap(rememberedLots.first)
+        XCTAssertEqual(remembered.previousLocationName, "Box A")
+        XCTAssertEqual(remembered.previousLocationKey, "box a")
+        XCTAssertEqual(remembered.productID, 1)
+        XCTAssertEqual(remembered.finish, "foil")
+        XCTAssertEqual(remembered.language, "en")
+        XCTAssertEqual(remembered.quantity, 2)
+
+        let secondDraftValue = try await repository.beginDeckDraft(id: deck.id, at: Date(timeIntervalSince1970: 20))
+        let secondDraft = try XCTUnwrap(secondDraftValue)
+        var edited = try XCTUnwrap(secondDraft.entries.first)
+        edited.quantity = 1
+        try await repository.saveDeckDraftEntry(edited, at: Date(timeIntervalSince1970: 21))
+        let editedDraftValue = try await repository.deckDraftSnapshot(id: deck.id)
+        let editedDraft = try XCTUnwrap(editedDraftValue)
+        let removal = PlannedInventoryMovement(
+            operationID: "remove",
+            inventoryID: "deck-line",
+            productID: 1,
+            nameSlug: "ahri",
+            quantity: 1,
+            sourceLocationName: "Deck",
+            destinationLocationName: "Box B",
+            finish: "foil",
+            language: "en",
+            originLotID: remembered.id
+        )
+        let secondPlan = DeckSavePlan(planID: UUID(), deckID: deck.id, deckLocationName: "Deck", movements: [removal], requirements: [], unresolvedRemovalDestinations: [])
+        let secondOperation = DeckSaveOperation(plan: secondPlan, draftUpdatedAt: editedDraft.updatedAt)
+        try await repository.saveDeckSaveOperation(secondOperation)
+        _ = try await repository.finalizeDeckSaveOperation(deckID: deck.id, operationID: secondOperation.id, at: Date(timeIntervalSince1970: 22))
+
+        let remainingLots = try await repository.deckCardOriginLots(deckID: deck.id)
+        let remaining = try XCTUnwrap(remainingLots.first)
+        XCTAssertEqual(remaining.previousLocationName, "Box A", "Changing the return destination must not rewrite the remembered origin")
+        XCTAssertEqual(remaining.quantity, 1)
+    }
 }
 
 private struct OperationContext {

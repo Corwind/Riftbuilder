@@ -81,6 +81,7 @@ private actor SynchronizerRepositorySpy: RiftBuilderRepository {
     func decks() async throws -> [Deck] { [] }
     func deckLegendDomains() async throws -> [UUID: [String]] { [:] }
     func deckSnapshot(id: UUID) async throws -> DeckSnapshot? { nil }
+    func deckCardOriginLots(deckID: UUID) async throws -> [DeckCardOriginLot] { [] }
     func deckDraftSnapshot(id: UUID) async throws -> DeckDraftSnapshot? { nil }
     func beginDeckDraft(id: UUID, at date: Date) async throws -> DeckDraftSnapshot? { nil }
     func saveDeckDraftEntry(_ entry: DeckEntry, at date: Date) async throws {}
