@@ -87,6 +87,38 @@ final class DeckSavePlannerBehaviorTests: XCTestCase {
         XCTAssertTrue(plan.requirements.isEmpty)
     }
 
+    func testAlwaysAvailableBattlefieldsDoNotCreateSaveMovements() throws {
+        let fixture = SavePlanFixture(
+            saved: [],
+            draft: [entry("spirit-realm", zone: .battlefield, quantity: 3)]
+        )
+
+        let plan = try fixture.plan(inventory: fixture.inventory(lines: []))
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertTrue(plan.movements.isEmpty)
+        XCTAssertTrue(plan.requirements.isEmpty)
+    }
+
+    func testDisabledSupplyOptionsRestorePhysicalSaveRequirements() throws {
+        let fixture = SavePlanFixture(
+            saved: [],
+            draft: [
+                entry("mind-rune", zone: .rune, quantity: 2),
+                entry("spirit-realm", zone: .battlefield, quantity: 3),
+            ]
+        )
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: []),
+            inventoryAvailability: DeckInventoryAvailability(alwaysAvailableRunes: false, alwaysAvailableBattlefields: false)
+        )
+
+        XCTAssertEqual(plan.requirements.map(\.requirement.nameSlug), ["mind-rune", "spirit-realm"])
+        XCTAssertEqual(plan.missingQuantity, 5)
+        XCTAssertFalse(plan.canApply)
+    }
+
     func testShortagePreventsApplyingDraftAndExplainsMissingQuantity() throws {
         let fixture = SavePlanFixture(saved: [], draft: [entry("vex", quantity: 3)])
         let inventory = fixture.inventory(lines: [line("only-vex", productID: 2, quantity: 1, location: "Box A")])
@@ -152,6 +184,8 @@ private struct SavePlanFixture {
                 1: CardPrinting(productID: 1, nameSlug: "ahri", printingSlug: "ahri-normal", displayName: "Ahri"),
                 2: CardPrinting(productID: 2, nameSlug: "vex", printingSlug: "vex-normal", displayName: "Vex"),
                 3: CardPrinting(productID: 3, nameSlug: "ahri", printingSlug: "ahri-foil", displayName: "Ahri"),
+                4: CardPrinting(productID: 4, nameSlug: "mind-rune", printingSlug: "mind-rune-normal", displayName: "Mind Rune"),
+                5: CardPrinting(productID: 5, nameSlug: "spirit-realm", printingSlug: "spirit-realm-normal", displayName: "Spirit Realm"),
             ],
             locationPolicies: [
                 LocationPolicy(normalizedName: "deck ezreal", displayName: "Deck Ezreal", kind: .deck, countsAsAvailable: false, linkedDeckID: fixtureDeckID),
@@ -163,14 +197,15 @@ private struct SavePlanFixture {
         )
     }
 
-    func plan(inventory: AssemblyInventorySnapshot, destinations: [DeckRemovalDestination] = []) throws -> DeckSavePlan {
+    func plan(inventory: AssemblyInventorySnapshot, destinations: [DeckRemovalDestination] = [], inventoryAvailability: DeckInventoryAvailability = DeckInventoryAvailability()) throws -> DeckSavePlan {
         try DeckSavePlanner().makePlan(DeckSavePlanRequest(
             planID: UUID(uuidString: "00000000-0000-0000-0000-000000000999")!,
             savedDeck: saved,
             draft: draft,
             inventory: inventory,
             deckLocationName: "Deck Ezreal",
-            removalDestinations: destinations
+            removalDestinations: destinations,
+            inventoryAvailability: inventoryAvailability
         ))
     }
 }

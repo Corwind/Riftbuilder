@@ -5,6 +5,9 @@ import RiftBuilderCore
 @MainActor
 @Observable
 final class AppModel {
+    private static let alwaysAvailableRunesKey = "riftbuilder.deckInventory.alwaysAvailableRunes"
+    private static let alwaysAvailableBattlefieldsKey = "riftbuilder.deckInventory.alwaysAvailableBattlefields"
+
     var destination: AppDestination? = .inventory
     var inventoryPresentation: InventoryPresentation = .grid
     var inventoryScope: InventoryScope = .all
@@ -35,12 +38,29 @@ final class AppModel {
     var pickerSearch = ""
     var pickerZone: DeckZone = .main
     var deckNamingRequest: DeckNamingRequest?
+    var alwaysAvailableRunes: Bool {
+        didSet { defaults.set(alwaysAvailableRunes, forKey: Self.alwaysAvailableRunesKey) }
+    }
+    var alwaysAvailableBattlefields: Bool {
+        didSet { defaults.set(alwaysAvailableBattlefields, forKey: Self.alwaysAvailableBattlefieldsKey) }
+    }
 
     let service: any AppDataServicing
+    @ObservationIgnored private let defaults: UserDefaults
     private var didBootstrap = false
 
-    init(service: any AppDataServicing) {
+    init(service: any AppDataServicing, defaults: UserDefaults = .standard) {
         self.service = service
+        self.defaults = defaults
+        alwaysAvailableRunes = defaults.object(forKey: Self.alwaysAvailableRunesKey) as? Bool ?? true
+        alwaysAvailableBattlefields = defaults.object(forKey: Self.alwaysAvailableBattlefieldsKey) as? Bool ?? true
+    }
+
+    var deckInventoryAvailability: DeckInventoryAvailability {
+        DeckInventoryAvailability(
+            alwaysAvailableRunes: alwaysAvailableRunes,
+            alwaysAvailableBattlefields: alwaysAvailableBattlefields
+        )
     }
 
     var filteredInventory: [AppInventoryCard] {

@@ -61,14 +61,16 @@ public struct DeckSavePlanRequest: Sendable {
     public let inventory: AssemblyInventorySnapshot
     public let deckLocationName: String
     public let removalDestinations: [DeckRemovalDestination]
+    public let inventoryAvailability: DeckInventoryAvailability
 
-    public init(planID: UUID = UUID(), savedDeck: DeckSnapshot, draft: DeckDraftSnapshot, inventory: AssemblyInventorySnapshot, deckLocationName: String, removalDestinations: [DeckRemovalDestination] = []) {
+    public init(planID: UUID = UUID(), savedDeck: DeckSnapshot, draft: DeckDraftSnapshot, inventory: AssemblyInventorySnapshot, deckLocationName: String, removalDestinations: [DeckRemovalDestination] = [], inventoryAvailability: DeckInventoryAvailability = DeckInventoryAvailability()) {
         self.planID = planID
         self.savedDeck = savedDeck
         self.draft = draft
         self.inventory = inventory
         self.deckLocationName = deckLocationName
         self.removalDestinations = removalDestinations
+        self.inventoryAvailability = inventoryAvailability
     }
 }
 

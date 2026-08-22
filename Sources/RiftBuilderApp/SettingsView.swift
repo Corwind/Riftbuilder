@@ -14,6 +14,22 @@ struct SettingsView: View {
                     ThemeSettingsSection()
                 }
 
+                settingsCard("Deck inventory") {
+                    Toggle("Always consider Runes available", isOn: $model.alwaysAvailableRunes)
+                    Text("When enabled, Rune cards never need to be scanned, moved into a deck, or counted as missing.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Always consider Battlefields available", isOn: $model.alwaysAvailableBattlefields)
+                    Text("When enabled, Battlefield cards never need to be scanned, moved into a deck, or counted as missing.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    Text("Turn either option off to use CardNexus inventory and locations normally for that card type. These settings affect availability and physical movement only; deck-building rules are unchanged.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
                 settingsCard("CardNexus account") {
                     credentialContent
                 }

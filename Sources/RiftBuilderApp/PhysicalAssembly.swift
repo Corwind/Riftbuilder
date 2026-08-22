@@ -76,21 +76,21 @@ enum AppPhysicalAssemblyError: LocalizedError {
 }
 
 protocol PhysicalAssemblyServicing: AppDataServicing {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan
     func makeDisassemblyPlan(deckID: UUID, destinationStorageLocationName: String) async throws -> AppPhysicalPlan
     func assemblyStorageLocations() async throws -> [LocationPolicy]
     func executePhysicalPlan(_ plan: AppPhysicalPlan) async throws -> AppPhysicalExecutionOutcome
 }
 
 extension PhysicalAssemblyServicing {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical assembly is unavailable.") }
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical assembly is unavailable.") }
     func makeDisassemblyPlan(deckID: UUID, destinationStorageLocationName: String) async throws -> AppPhysicalPlan { throw AppServiceError.unavailable("Physical disassembly is unavailable.") }
     func assemblyStorageLocations() async throws -> [LocationPolicy] { [] }
     func executePhysicalPlan(_ plan: AppPhysicalPlan) async throws -> AppPhysicalExecutionOutcome { throw AppServiceError.unavailable("Physical inventory writing is unavailable.") }
 }
 
 extension LiveAppDataService {
-    func makeAssemblyPlan(deckID: UUID) async throws -> AppPhysicalPlan {
+    func makeAssemblyPlan(deckID: UUID, inventoryAvailability: DeckInventoryAvailability) async throws -> AppPhysicalPlan {
         guard let deck = try await repository.deckSnapshot(id: deckID) else { throw AppPhysicalAssemblyError.deckNotFound }
         let inventory = try await assemblyStore.assemblyInventorySnapshot()
         guard let destination = inventory.locationPolicies.first(where: { $0.kind == .deck && $0.linkedDeckID == deckID }) else {
@@ -99,7 +99,8 @@ extension LiveAppDataService {
         let plan = try DeckAssemblyPlanner().makePlan(AssemblyPlanRequest(
             deck: deck,
             inventory: inventory,
-            destinationLocationName: destination.displayName
+            destinationLocationName: destination.displayName,
+            inventoryAvailability: inventoryAvailability
         ))
         return Self.present(plan: .assembly(plan), deck: deck, inventory: inventory)
     }
@@ -215,7 +216,7 @@ final class PhysicalAssemblyModel {
         phase = .planning
         executionOutcome = nil
         do {
-            proposal = try await service.makeAssemblyPlan(deckID: deckID)
+            proposal = try await service.makeAssemblyPlan(deckID: deckID, inventoryAvailability: appModel.deckInventoryAvailability)
             isConfirmationPresented = true
         } catch {
             appModel.notice = "Assembly plan could not be created: \(error.localizedDescription)"

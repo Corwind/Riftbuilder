@@ -43,10 +43,9 @@ public struct DeckAssemblyPlanner: Sendable {
         }
 
         var quantitiesByRequirement: [RequirementKey: Int] = [:]
-        // Runes are unlimited game components rather than owned physical stock.
-        // They remain in the snapshot for legality validation, but assembly must
-        // never allocate inventory, report shortages, or move lines for them.
-        for entry in request.deck.entries where entry.quantity > 0 && entry.zone != .rune {
+        // Configured supply zones remain in the snapshot for legality validation,
+        // but assembly never allocates inventory or reports shortages for them.
+        for entry in request.deck.entries where entry.quantity > 0 && !request.inventoryAvailability.isAlwaysAvailable(entry.zone) {
             let key = RequirementKey(
                 nameSlug: entry.nameSlug,
                 preference: PrintingPreference(

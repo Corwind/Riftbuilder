@@ -42,12 +42,12 @@ enum AppDeckSaveError: LocalizedError {
 }
 
 protocol DeckSaveServicing: AppDataServicing {
-    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppDeckSaveProposal
+    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination], inventoryAvailability: DeckInventoryAvailability) async throws -> AppDeckSaveProposal
     func applyDeckSaveProposal(_ proposal: AppDeckSaveProposal) async throws -> DeckSaveApplicationOutcome
 }
 
 extension DeckSaveServicing {
-    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppDeckSaveProposal {
+    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination], inventoryAvailability: DeckInventoryAvailability) async throws -> AppDeckSaveProposal {
         throw AppServiceError.unavailable("Deck saving is unavailable.")
     }
 
@@ -63,7 +63,7 @@ extension LiveAppDataService: DeckSaveInventoryReconciling {
 }
 
 extension LiveAppDataService {
-    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination]) async throws -> AppDeckSaveProposal {
+    func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination], inventoryAvailability: DeckInventoryAvailability) async throws -> AppDeckSaveProposal {
         guard let saved = try await repository.deckSnapshot(id: deckID) else { throw AppDeckSaveError.deckNotFound }
         guard let draft = try await repository.deckDraftSnapshot(id: deckID) else { throw AppDeckSaveError.draftNotFound }
         guard !DeckDraftDiff(savedEntries: saved.entries, draftEntries: draft.entries).isEmpty else { throw AppDeckSaveError.noChanges }
@@ -97,7 +97,8 @@ extension LiveAppDataService {
             draft: draft,
             inventory: inventory,
             deckLocationName: deckLocation.displayName,
-            removalDestinations: removalDestinations
+            removalDestinations: removalDestinations,
+            inventoryAvailability: inventoryAvailability
         ))
         let identities = draft.identities.merging(saved.identities) { current, _ in current }
         let movements = plan.movements.map { movement in
@@ -181,12 +182,12 @@ final class DeckSaveWorkflowModel {
         outcome = nil
         removalDestinations = [:]
         do {
-            var proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: [])
+            var proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: [], inventoryAvailability: appModel.deckInventoryAvailability)
             let removals = proposal.requirements.filter { $0.result.direction == .outOfDeck }
             if !removals.isEmpty {
                 guard let defaultLocation = proposal.storageLocations.first?.displayName else { throw AppDeckSaveError.noStorageForRemovals }
                 for removal in removals { removalDestinations[removal.result.requirement] = defaultLocation }
-                proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues)
+                proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues, inventoryAvailability: appModel.deckInventoryAvailability)
             }
             self.proposal = proposal
             isPresented = true
@@ -201,7 +202,7 @@ final class DeckSaveWorkflowModel {
         removalDestinations[requirement] = locationName
         phase = .planning
         do {
-            proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues)
+            proposal = try await service.makeDeckSaveProposal(deckID: deckID, removalDestinations: destinationValues, inventoryAvailability: appModel.deckInventoryAvailability)
         } catch {
             appModel.notice = "Save plan could not be updated: \(error.localizedDescription)"
         }

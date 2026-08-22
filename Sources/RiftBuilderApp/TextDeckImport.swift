@@ -18,7 +18,8 @@ struct AppTextDeckReadinessRow: Identifiable, Hashable, Sendable {
     let zones: [DeckZone]
     let required: Int
     let readyInStorage: Int
-    let virtualRuneQuantity: Int
+    let alwaysAvailableQuantity: Int
+    let alwaysAvailableZones: [DeckZone]
     let storageLocations: [AppTextDeckLocationAllocation]
     let unavailableInDecks: Int
     let deckLocations: [AppTextDeckLocationAllocation]
@@ -37,7 +38,7 @@ struct AppTextDeckImportOutcome: Sendable {
 
     var totalRequired: Int { rows.reduce(0) { $0 + $1.required } }
     var totalReadyInStorage: Int { rows.reduce(0) { $0 + $1.readyInStorage } }
-    var totalVirtualRuneQuantity: Int { rows.reduce(0) { $0 + $1.virtualRuneQuantity } }
+    var totalAlwaysAvailableQuantity: Int { rows.reduce(0) { $0 + $1.alwaysAvailableQuantity } }
     var totalUnavailableInDecks: Int { rows.reduce(0) { $0 + $1.unavailableInDecks } }
     var totalOtherwiseUnavailable: Int { rows.reduce(0) { $0 + $1.otherwiseUnavailable } }
     var totalNotOwned: Int { rows.reduce(0) { $0 + $1.notOwned } }
@@ -68,11 +69,11 @@ enum AppTextDeckImportError: LocalizedError {
 }
 
 protocol TextDeckImportServicing: DeckTransferServicing {
-    func importTextDeck(_ text: String, deckName: String) async throws -> AppTextDeckImportOutcome
+    func importTextDeck(_ text: String, deckName: String, inventoryAvailability: DeckInventoryAvailability) async throws -> AppTextDeckImportOutcome
 }
 
 extension TextDeckImportServicing {
-    func importTextDeck(_ text: String, deckName requestedName: String) async throws -> AppTextDeckImportOutcome {
+    func importTextDeck(_ text: String, deckName requestedName: String, inventoryAvailability: DeckInventoryAvailability) async throws -> AppTextDeckImportOutcome {
         let document = try TextDeckTextParser.parse(text)
         guard !document.entries.isEmpty else { throw AppTextDeckImportError.emptyDeckList }
         let deckName = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -105,17 +106,18 @@ extension TextDeckImportServicing {
 
         do {
             let inventory = try await inventoryCards(search: nil, targetDeckID: deckID)
-            return try Self.readinessOutcome(deck: deck, resolved: resolved, inventory: inventory)
+            return try Self.readinessOutcome(deck: deck, resolved: resolved, inventory: inventory, inventoryAvailability: inventoryAvailability)
         } catch {
             try? await deleteDeck(id: deckID)
             throw AppTextDeckImportError.saveFailed(error.localizedDescription)
         }
     }
 
-    private static func readinessOutcome(deck: Deck, resolved: ResolvedTextDeckImport, inventory: [AppInventoryCard]) throws -> AppTextDeckImportOutcome {
+    private static func readinessOutcome(deck: Deck, resolved: ResolvedTextDeckImport, inventory: [AppInventoryCard], inventoryAvailability: DeckInventoryAvailability) throws -> AppTextDeckImportOutcome {
         let inventoryBySlug = Dictionary(uniqueKeysWithValues: inventory.map { ($0.id, $0) })
         var requiredBySlug: [String: Int] = [:]
-        var runeQuantityBySlug: [String: Int] = [:]
+        var alwaysAvailableQuantityBySlug: [String: Int] = [:]
+        var alwaysAvailableZonesBySlug: [String: Set<DeckZone>] = [:]
         var zonesBySlug: [String: Set<DeckZone>] = [:]
         for entry in resolved.entries {
             let (quantity, overflow) = requiredBySlug[entry.nameSlug, default: 0].addingReportingOverflow(entry.quantity)
@@ -123,12 +125,13 @@ extension TextDeckImportServicing {
                 throw AppTextDeckImportError.quantityOverflow(resolved.identities[entry.nameSlug]?.displayName ?? entry.nameSlug)
             }
             requiredBySlug[entry.nameSlug] = quantity
-            if entry.zone == .rune {
-                let (runeQuantity, runeOverflow) = runeQuantityBySlug[entry.nameSlug, default: 0].addingReportingOverflow(entry.quantity)
-                guard !runeOverflow else {
+            if inventoryAvailability.isAlwaysAvailable(entry.zone) {
+                let (alwaysAvailableQuantity, alwaysAvailableOverflow) = alwaysAvailableQuantityBySlug[entry.nameSlug, default: 0].addingReportingOverflow(entry.quantity)
+                guard !alwaysAvailableOverflow else {
                     throw AppTextDeckImportError.quantityOverflow(resolved.identities[entry.nameSlug]?.displayName ?? entry.nameSlug)
                 }
-                runeQuantityBySlug[entry.nameSlug] = runeQuantity
+                alwaysAvailableQuantityBySlug[entry.nameSlug] = alwaysAvailableQuantity
+                alwaysAvailableZonesBySlug[entry.nameSlug, default: []].insert(entry.zone)
             }
             zonesBySlug[entry.nameSlug, default: []].insert(entry.zone)
         }
@@ -136,10 +139,10 @@ extension TextDeckImportServicing {
         let rows: [AppTextDeckReadinessRow] = requiredBySlug.map { nameSlug, required in
             let card = inventoryBySlug[nameSlug]
             let availability = card?.availability ?? CardAvailability(totalOwned: 0, availableInStorage: 0)
-            let virtualRunes = min(required, runeQuantityBySlug[nameSlug, default: 0])
-            let physicalRequired = required - virtualRunes
+            let alwaysAvailable = min(required, alwaysAvailableQuantityBySlug[nameSlug, default: 0])
+            let physicalRequired = required - alwaysAvailable
             let readyFromStorage = min(physicalRequired, availability.availableInStorage)
-            let ready = virtualRunes + readyFromStorage
+            let ready = alwaysAvailable + readyFromStorage
             var remaining = physicalRequired - readyFromStorage
             let inDecks = min(remaining, availability.inTargetDeck + availability.inOtherDecks)
             remaining -= inDecks
@@ -153,7 +156,8 @@ extension TextDeckImportServicing {
                 zones: Array(zonesBySlug[nameSlug, default: []]).sorted { $0.appSortOrder < $1.appSortOrder },
                 required: required,
                 readyInStorage: ready,
-                virtualRuneQuantity: virtualRunes,
+                alwaysAvailableQuantity: alwaysAvailable,
+                alwaysAvailableZones: Array(alwaysAvailableZonesBySlug[nameSlug, default: []]).sorted { $0.appSortOrder < $1.appSortOrder },
                 storageLocations: allocate(locations.filter(\.isAvailable), limit: readyFromStorage),
                 unavailableInDecks: inDecks,
                 deckLocations: allocate(locations.filter { $0.kind == .deck }, limit: inDecks),
@@ -232,7 +236,7 @@ final class TextDeckImportModel {
         errorMessage = nil
         defer { isWorking = false }
         do {
-            let result = try await service.importTextDeck(text, deckName: deckName)
+            let result = try await service.importTextDeck(text, deckName: deckName, inventoryAvailability: appModel.deckInventoryAvailability)
             outcome = result
             await appModel.loadDecks()
             appModel.selectedDeckID = result.deckID
@@ -319,7 +323,7 @@ private struct TextDeckImportView: View {
             Text("Supported sections: Legend, Champion, MainDeck, Battlefields, Rune Pool, and Sideboard.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text("Rune Pool cards are always considered available and never need to exist in inventory.")
+            Text(inventoryAssumptionSummary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextEditor(text: $workflow.text)
@@ -373,7 +377,7 @@ private struct TextDeckImportView: View {
             }
             Divider()
             HStack {
-                Text(outcome.totalBuildShortage == 0 ? "Every required physical card is available; runes are supplied automatically." : "Build shortage includes physical cards in other decks and cards you do not own. Runes never contribute to shortages.")
+                Text(readinessSummary(outcome))
                     .foregroundStyle(outcome.totalBuildShortage == 0 ? .green : .secondary)
                 Spacer()
                 Button("Open Imported Deck") {
@@ -398,7 +402,7 @@ private struct TextDeckImportView: View {
                 Spacer()
                 QuantityBadge(title: "Need", value: row.required)
                 QuantityBadge(title: "Ready", value: row.readyInStorage, tint: .green)
-                if row.virtualRuneQuantity > 0 { QuantityBadge(title: "Unlimited runes", value: row.virtualRuneQuantity, tint: .green) }
+                if row.alwaysAvailableQuantity > 0 { QuantityBadge(title: "Always available", value: row.alwaysAvailableQuantity, tint: .green) }
                 if row.unavailableInDecks > 0 { QuantityBadge(title: "In decks", value: row.unavailableInDecks, tint: .orange) }
                 if row.otherwiseUnavailable > 0 { QuantityBadge(title: "Unavailable", value: row.otherwiseUnavailable, tint: .orange) }
                 if row.notOwned > 0 { QuantityBadge(title: "Not owned", value: row.notOwned, tint: .red) }
@@ -410,6 +414,23 @@ private struct TextDeckImportView: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var inventoryAssumptionSummary: String {
+        switch (appModel.alwaysAvailableRunes, appModel.alwaysAvailableBattlefields) {
+        case (true, true): "Runes and Battlefields are considered always available according to Settings."
+        case (true, false): "Runes are considered always available; Battlefields use scanned inventory according to Settings."
+        case (false, true): "Battlefields are considered always available; Runes use scanned inventory according to Settings."
+        case (false, false): "Runes and Battlefields both use scanned inventory according to Settings."
+        }
+    }
+
+    private func readinessSummary(_ outcome: AppTextDeckImportOutcome) -> String {
+        let supplied = outcome.totalAlwaysAvailableQuantity
+        if outcome.totalBuildShortage == 0 {
+            return supplied > 0 ? "Every required physical card is available; \(supplied) Rune or Battlefield card(s) are supplied automatically." : "Every required card is available in scanned inventory."
+        }
+        return supplied > 0 ? "Build shortage includes physical cards in other decks and cards you do not own. Always-available cards do not contribute to shortages." : "Build shortage includes cards in other decks and cards you do not own."
     }
 
     @ViewBuilder

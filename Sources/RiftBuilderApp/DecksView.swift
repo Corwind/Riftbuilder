@@ -309,6 +309,7 @@ private struct DeckEditorView: View {
                         identity: identity,
                         inventory: inventory,
                         catalogueCard: catalogue,
+                        isAlwaysAvailable: model.deckInventoryAvailability.isAlwaysAvailable(entry.zone),
                         changeQuantity: { delta in
                             Task { await model.changeQuantity(entry, delta: delta) }
                         },
@@ -327,6 +328,7 @@ private struct DeckEditorView: View {
                         entry: entry,
                         identity: identity,
                         inventory: inventory,
+                        isAlwaysAvailable: model.deckInventoryAvailability.isAlwaysAvailable(entry.zone),
                         changeQuantity: { delta in
                             Task { await model.changeQuantity(entry, delta: delta) }
                         },
@@ -372,7 +374,7 @@ private struct DeckEditorView: View {
         var physicalRequiredBySlug: [String: Int] = [:]
         var buildable = 0
         for entry in snapshot.entries {
-            if entry.zone == .rune {
+            if model.deckInventoryAvailability.isAlwaysAvailable(entry.zone) {
                 buildable += entry.quantity
             } else {
                 physicalRequiredBySlug[entry.nameSlug, default: 0] += entry.quantity
@@ -483,6 +485,7 @@ private struct DeckEntryRow: View {
     let entry: DeckEntry
     let identity: CardIdentity?
     let inventory: AppInventoryCard?
+    let isAlwaysAvailable: Bool
     let changeQuantity: (Int) -> Void
     let openCard: () -> Void
 
@@ -509,7 +512,7 @@ private struct DeckEntryRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Show details for \(identity?.displayName ?? entry.nameSlug)")
             Spacer()
-            if entry.zone == .rune {
+            if isAlwaysAvailable {
                 QuantityBadge(title: "Always available", value: entry.quantity, tint: .green)
             } else if let availability = inventory?.availability {
                 QuantityBadge(title: "Storage", value: availability.availableInStorage, tint: .green)

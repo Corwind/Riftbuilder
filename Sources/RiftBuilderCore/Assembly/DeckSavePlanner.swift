@@ -36,8 +36,8 @@ public struct DeckSavePlanner: Sendable {
             throw DeckSavePlanningError.deckLocationNotLinked(deckLocation, deckID)
         }
 
-        let savedQuantities = Self.physicalQuantities(request.savedDeck.entries)
-        let draftQuantities = Self.physicalQuantities(request.draft.entries)
+        let savedQuantities = Self.physicalQuantities(request.savedDeck.entries, availability: request.inventoryAvailability)
+        let draftQuantities = Self.physicalQuantities(request.draft.entries, availability: request.inventoryAvailability)
         let changedRequirements = Set(savedQuantities.keys).union(draftQuantities.keys).filter {
             savedQuantities[$0, default: 0] != draftQuantities[$0, default: 0]
         }.sorted(by: Self.requirementLessThan)
@@ -139,9 +139,9 @@ private extension DeckSavePlanner {
         let destinationLocationName: String
     }
 
-    static func physicalQuantities(_ entries: [DeckEntry]) -> [DeckPhysicalRequirementKey: Int] {
+    static func physicalQuantities(_ entries: [DeckEntry], availability: DeckInventoryAvailability) -> [DeckPhysicalRequirementKey: Int] {
         entries.reduce(into: [:]) { result, entry in
-            guard entry.quantity > 0, entry.zone != .rune else { return }
+            guard entry.quantity > 0, !availability.isAlwaysAvailable(entry.zone) else { return }
             result[DeckPhysicalRequirementKey(entry: entry), default: 0] += entry.quantity
         }
     }
