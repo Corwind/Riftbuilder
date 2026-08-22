@@ -93,6 +93,13 @@ private struct LocationPolicyRow: View {
                 Text(policy.normalizedName == "__unlocated__" ? "Cards without a CardNexus location" : "CardNexus location")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if policy.kind == .deck && policy.linkedDeckID == nil {
+                    Button(action: importDeck) {
+                        Label("Create deck from this location", systemImage: "rectangle.stack.badge.plus")
+                    }
+                    .buttonStyle(.link)
+                    .help("Create a legal deck definition from cards in this location")
+                }
             }
             Spacer()
             Picker("Classification", selection: Binding(
@@ -113,11 +120,6 @@ private struct LocationPolicyRow: View {
                     ForEach(model.linkableDecks(for: policy)) { deck in Text(deck.name).tag(Optional(deck.id)) }
                 }
                 .frame(width: 170)
-                if policy.linkedDeckID == nil {
-                    Button("Import Deck", action: importDeck)
-                        .buttonStyle(.borderedProminent)
-                        .help("Create a legal deck definition from cards in this location")
-                }
             }
         }
         .padding(14)

@@ -97,6 +97,11 @@ final class AppModel {
         return decks.filter { !linkedElsewhere.contains($0.id) || $0.id == location.linkedDeckID }
     }
 
+    var importableDeckLocations: [LocationPolicy] {
+        locations.filter { $0.kind == .deck && $0.linkedDeckID == nil }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     var selectedLegendIdentity: CardIdentity? {
         guard let snapshot = selectedDeckSnapshot,
               let legendEntry = snapshot.entries.first(where: { $0.zone == .legend })
