@@ -103,3 +103,32 @@ public struct DeckSavePlan: Codable, Hashable, Identifiable, Sendable {
         )
     }
 }
+
+public struct DeckSaveOperation: Codable, Hashable, Identifiable, Sendable {
+    public var id: UUID { plan.planID }
+    public let plan: DeckSavePlan
+    public let draftUpdatedAt: Date
+    public let createdAt: Date
+
+    public init(plan: DeckSavePlan, draftUpdatedAt: Date, createdAt: Date = Date()) {
+        self.plan = plan
+        self.draftUpdatedAt = draftUpdatedAt
+        self.createdAt = createdAt
+    }
+}
+
+public struct DeckSaveApplicationOutcome: Sendable {
+    public let report: AssemblyExecutionReport?
+    public let reconciled: Bool
+    public let finalizedSnapshot: DeckSnapshot?
+    public let message: String?
+
+    public init(report: AssemblyExecutionReport?, reconciled: Bool, finalizedSnapshot: DeckSnapshot?, message: String? = nil) {
+        self.report = report
+        self.reconciled = reconciled
+        self.finalizedSnapshot = finalizedSnapshot
+        self.message = message
+    }
+
+    public var isFinalized: Bool { finalizedSnapshot != nil }
+}

@@ -160,6 +160,16 @@ enum RiftBuilderDatabaseSchema {
                 """)
         }
 
+        migrator.registerMigration("v4_deck_save_operations") { db in
+            try db.create(table: "deck_save_operation") { table in
+                table.column("operation_id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().unique().references("deck", onDelete: .cascade)
+                table.column("draft_updated_at", .text).notNull()
+                table.column("plan_json", .text).notNull()
+                table.column("created_at", .text).notNull()
+            }
+        }
+
         return migrator
     }
 }

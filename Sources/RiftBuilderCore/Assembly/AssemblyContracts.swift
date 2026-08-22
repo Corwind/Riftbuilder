@@ -10,6 +10,20 @@ public protocol AssemblyExecutionJournaling: Sendable {
     func markAssemblyExecutionReconciled(planID: UUID) async throws
 }
 
+public protocol DeckSavePlanExecuting: Sendable {
+    func execute(_ plan: AssemblyPlan) async throws -> AssemblyExecutionReport
+}
+
+public protocol DeckSaveInventoryReconciling: Sendable {
+    func reconcileDeckSaveInventory() async throws
+}
+
+public protocol DeckSaveOperationStoring: Sendable {
+    func saveDeckSaveOperation(_ operation: DeckSaveOperation) async throws
+    func deckSaveOperation(deckID: UUID) async throws -> DeckSaveOperation?
+    func finalizeDeckSaveOperation(deckID: UUID, operationID: UUID, at date: Date) async throws -> DeckSnapshot?
+}
+
 public struct InventoryBulkLocationMove: Codable, Hashable, Sendable {
     public let inventoryID: String
     public let quantity: Int
