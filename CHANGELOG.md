@@ -2,6 +2,18 @@
 
 All notable changes to RiftBuilder are recorded in this file. RiftBuilder follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-08-23
+
+### Added
+
+- Added legality-aware card selection for each deck zone, including Legend-domain Champion filtering and per-zone card type and quantity limits.
+- Added persistent deck editing sessions that track inventory movements, source locations, removed cards, and return destinations until changes are saved.
+- Added automatic CardNexus deck-location creation and batch inventory movements when saving a deck, with a review step showing where to collect and return cards.
+- Added deck disbanding that returns cards to their previous locations by default while allowing those destinations to be changed.
+- Added independent settings that treat Runes and Battlefields as always available without requiring them to be scanned into inventory.
+- Added deck creation from CardNexus locations classified as Deck, with one-to-one location linking and automatic reconstruction of deck contents.
+- Added pending imports for incomplete location decks that can still be completed into legal decks, while rejecting structural legality violations.
+
 ## [0.1.1] - 2026-08-22
 
 ### Added
