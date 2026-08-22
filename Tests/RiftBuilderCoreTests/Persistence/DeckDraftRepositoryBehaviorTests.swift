@@ -110,6 +110,12 @@ final class DeckDraftRepositoryBehaviorTests: XCTestCase {
         edited.quantity = 5
         try await repository.saveDeckDraftEntry(edited, at: date(30))
         try await repository.saveDeckDraftEntry(DeckEntry(deckID: deck.id, zone: .legend, nameSlug: "ahri", quantity: 1), at: date(31))
+        try await repository.synchronizeInventory(
+            lines: [InventoryLine(inventoryID: "owned-ahri", productID: 1, finish: "normal", language: "en", quantity: 1, locationName: "Box", updatedAt: date(32))],
+            locations: [InventoryLocation(name: "Box")],
+            generation: UUID(),
+            completedAt: date(32)
+        )
 
         let inventory = try await repository.inventoryCards(search: nil, targetDeckID: deck.id)
         let domains = try await repository.deckLegendDomains()
