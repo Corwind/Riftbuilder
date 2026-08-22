@@ -3,7 +3,7 @@ import SwiftUI
 
 struct LocationsView: View {
     @Bindable var model: AppModel
-    @State private var isCreatingDeckLocation = false
+    @State private var isCreatingLocation = false
 
     var body: some View {
         Group {
@@ -19,9 +19,9 @@ struct LocationsView: View {
                     ContentUnavailableView {
                         Label("No Locations", systemImage: "shippingbox")
                     } description: {
-                        Text("Create a deck location here or synchronize locations already present in CardNexus.")
+                        Text("Create a location here or synchronize locations already present in CardNexus.")
                     } actions: {
-                        Button("Create Deck Location") { isCreatingDeckLocation = true }
+                        Button("Create Location") { isCreatingLocation = true }
                     }
                 } else {
                     ScrollView {
@@ -40,9 +40,9 @@ struct LocationsView: View {
         .navigationTitle("Locations")
         .toolbar {
             Button {
-                isCreatingDeckLocation = true
+                isCreatingLocation = true
             } label: {
-                Label("Create Deck Location", systemImage: "plus")
+                Label("Create Location", systemImage: "plus")
             }
             Button {
                 Task { await model.loadLocations() }
@@ -50,8 +50,8 @@ struct LocationsView: View {
                 Label("Refresh Locations", systemImage: "arrow.clockwise")
             }
         }
-        .sheet(isPresented: $isCreatingDeckLocation) {
-            CreateDeckLocationView(model: model)
+        .sheet(isPresented: $isCreatingLocation) {
+            CreateLocationView(model: model)
         }
     }
 

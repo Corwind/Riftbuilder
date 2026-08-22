@@ -7,7 +7,7 @@ struct AppDeckLocationCreationResult: Sendable {
     let synchronizationWarning: String?
 }
 
-enum AppDeckLocationCreationError: LocalizedError {
+enum AppLocationCreationError: LocalizedError {
     case emptyName
     case deckNotFound
     case remoteCreatedButLocalSaveFailed(name: String, reason: String)
@@ -15,28 +15,31 @@ enum AppDeckLocationCreationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyName: "Enter a CardNexus location name."
-        case .deckNotFound: "Select an existing local deck to link."
+        case .deckNotFound: "Deck locations must link to an existing local deck."
         case let .remoteCreatedButLocalSaveFailed(name, reason): "CardNexus created or updated '\(name)', but RiftBuilder could not save its local deck link: \(reason)"
         }
     }
 }
 
-protocol DeckLocationCreating: AppDataServicing {
-    func createDeckLocation(name: String, color: String?, linkedDeckID: UUID) async throws -> AppDeckLocationCreationResult
+protocol InventoryLocationCreating: AppDataServicing {
+    func createInventoryLocation(name: String, color: String?, icon: String?, kind: LocationKind, linkedDeckID: UUID?) async throws -> AppDeckLocationCreationResult
 }
 
-extension DeckLocationCreating {
-    func createDeckLocation(name: String, color: String?, linkedDeckID: UUID) async throws -> AppDeckLocationCreationResult {
+extension InventoryLocationCreating {
+    func createInventoryLocation(name: String, color: String?, icon: String?, kind: LocationKind, linkedDeckID: UUID?) async throws -> AppDeckLocationCreationResult {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw AppDeckLocationCreationError.emptyName }
-        guard try await decks().contains(where: { $0.id == linkedDeckID }) else { throw AppDeckLocationCreationError.deckNotFound }
+        guard !trimmed.isEmpty else { throw AppLocationCreationError.emptyName }
+        if kind == .deck {
+            guard let linkedDeckID, try await decks().contains(where: { $0.id == linkedDeckID }) else { throw AppLocationCreationError.deckNotFound }
+        }
         let policy = LocationPolicy(
             normalizedName: InventoryLocation.normalize(trimmed),
             displayName: trimmed,
             color: color,
-            kind: .deck,
-            countsAsAvailable: false,
-            linkedDeckID: linkedDeckID
+            icon: icon,
+            kind: kind,
+            countsAsAvailable: kind == .storage,
+            linkedDeckID: kind == .deck ? linkedDeckID : nil
         )
         try await saveLocationPolicy(policy)
         return AppDeckLocationCreationResult(policy: policy, synchronizationWarning: nil)
@@ -44,25 +47,27 @@ extension DeckLocationCreating {
 }
 
 extension LiveAppDataService {
-    func createDeckLocation(name: String, color: String?, linkedDeckID: UUID) async throws -> AppDeckLocationCreationResult {
+    func createInventoryLocation(name: String, color: String?, icon: String?, kind: LocationKind, linkedDeckID: UUID?) async throws -> AppDeckLocationCreationResult {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw AppDeckLocationCreationError.emptyName }
-        guard try await repository.decks().contains(where: { $0.id == linkedDeckID }) else { throw AppDeckLocationCreationError.deckNotFound }
+        guard !trimmed.isEmpty else { throw AppLocationCreationError.emptyName }
+        if kind == .deck {
+            guard let linkedDeckID, try await repository.decks().contains(where: { $0.id == linkedDeckID }) else { throw AppLocationCreationError.deckNotFound }
+        }
 
-        let remote = try await cardNexus.upsertInventoryLocation(InventoryLocationUpsertRequest(name: trimmed, color: color))
+        let remote = try await cardNexus.upsertInventoryLocation(InventoryLocationUpsertRequest(name: trimmed, color: color, icon: icon))
         let policy = LocationPolicy(
             normalizedName: remote.normalizedName,
             displayName: remote.name,
             color: remote.color,
             icon: remote.icon,
-            kind: .deck,
-            countsAsAvailable: false,
-            linkedDeckID: linkedDeckID
+            kind: kind,
+            countsAsAvailable: kind == .storage,
+            linkedDeckID: kind == .deck ? linkedDeckID : nil
         )
         do {
             try await repository.saveLocationPolicy(policy)
         } catch {
-            throw AppDeckLocationCreationError.remoteCreatedButLocalSaveFailed(name: remote.name, reason: error.localizedDescription)
+            throw AppLocationCreationError.remoteCreatedButLocalSaveFailed(name: remote.name, reason: error.localizedDescription)
         }
 
         do {
@@ -78,41 +83,39 @@ extension LiveAppDataService {
     }
 }
 
-extension LiveAppDataService: DeckLocationCreating {}
-extension DemoAppDataService: DeckLocationCreating {}
-extension UnavailableAppDataService: DeckLocationCreating {}
+extension LiveAppDataService: InventoryLocationCreating {}
+extension DemoAppDataService: InventoryLocationCreating {}
+extension UnavailableAppDataService: InventoryLocationCreating {}
 
 extension AppModel {
-    func createDeckLocation(name: String, color: String?, linkedDeckID: UUID?) async -> Bool {
-        guard let linkedDeckID else {
-            notice = AppDeckLocationCreationError.deckNotFound.localizedDescription
-            return false
-        }
-        guard let creator = service as? any DeckLocationCreating else {
+    func createInventoryLocation(name: String, color: String?, icon: String?, kind: LocationKind, linkedDeckID: UUID?) async -> Bool {
+        guard let creator = service as? any InventoryLocationCreating else {
             notice = "CardNexus location creation is unavailable."
             return false
         }
         do {
-            let result = try await creator.createDeckLocation(name: name, color: color, linkedDeckID: linkedDeckID)
+            let result = try await creator.createInventoryLocation(name: name, color: color, icon: icon, kind: kind, linkedDeckID: linkedDeckID)
             await reloadAll()
             if let warning = result.synchronizationWarning {
                 notice = warning
             } else {
-                notice = "Created or updated '\(result.policy.displayName)' in CardNexus and linked it to the selected deck."
+                notice = "Created or updated '\(result.policy.displayName)' in CardNexus as \(result.policy.kind.appTitle.lowercased())."
             }
             return true
         } catch {
-            notice = "Deck location creation failed: \(error.localizedDescription)"
+            notice = "Location creation failed: \(error.localizedDescription)"
             return false
         }
     }
 }
 
-struct CreateDeckLocationView: View {
+struct CreateLocationView: View {
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var selectedDeckID: UUID?
+    @State private var kind: LocationKind = .storage
+    @State private var icon = "shippingbox"
     @State private var color: Color = .blue
     @State private var understandsRemoteWrite = false
     @State private var isSaving = false
@@ -122,18 +125,33 @@ struct CreateDeckLocationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Create Deck Location").font(.title2.weight(.semibold))
-                Text("Create or update a physical location in CardNexus and link it to one local deck.")
+                Text("Create Location").font(.title2.weight(.semibold))
+                Text("Create or update a CardNexus location, then choose how RiftBuilder should treat its inventory.")
                     .foregroundStyle(.secondary)
             }
 
             Form {
-                TextField("Location name", text: $name, prompt: Text("Deck: Ahri"))
+                TextField("Location name", text: $name, prompt: Text(kind == .deck ? "Deck: Ahri" : "Box A"))
                     .accessibilityHint("This exact name will be written to CardNexus")
+                Picker("Type", selection: $kind) {
+                    Label("Box / Storage", systemImage: "shippingbox").tag(LocationKind.storage)
+                    Label("Deck", systemImage: "rectangle.stack").tag(LocationKind.deck)
+                    Label("Unavailable", systemImage: "nosign").tag(LocationKind.unavailable)
+                }
                 ColorPicker("Location color", selection: $color, supportsOpacity: false)
-                Picker("Local deck", selection: $selectedDeckID) {
-                    Text("Select a deck").tag(UUID?.none)
-                    ForEach(model.decks) { deck in Text(deck.name).tag(Optional(deck.id)) }
+                Picker("Icon", selection: $icon) {
+                    Label("Box", systemImage: "shippingbox").tag("shippingbox")
+                    Label("Archive box", systemImage: "archivebox").tag("archivebox")
+                    Label("Deck", systemImage: "rectangle.stack").tag("rectangle.stack")
+                    Label("Binder", systemImage: "books.vertical").tag("books.vertical")
+                    Label("Shelf", systemImage: "tray.full").tag("tray.full")
+                    Label("Unavailable", systemImage: "nosign").tag("nosign")
+                }
+                if kind == .deck {
+                    Picker("Local deck", selection: $selectedDeckID) {
+                        Text("Select a deck").tag(UUID?.none)
+                        ForEach(model.decks) { deck in Text(deck.name).tag(Optional(deck.id)) }
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -152,17 +170,18 @@ struct CreateDeckLocationView: View {
                 Button(isSaving ? "Writing to CardNexus…" : "Create and Link") {
                     Task {
                         isSaving = true
-                        let saved = await model.createDeckLocation(name: trimmedName, color: color.cardNexusLocationHex, linkedDeckID: selectedDeckID)
+                        let saved = await model.createInventoryLocation(name: trimmedName, color: color.cardNexusLocationHex, icon: icon, kind: kind, linkedDeckID: selectedDeckID)
                         isSaving = false
                         if saved { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(trimmedName.isEmpty || selectedDeckID == nil || !understandsRemoteWrite || isSaving)
+                .disabled(trimmedName.isEmpty || (kind == .deck && selectedDeckID == nil) || !understandsRemoteWrite || isSaving)
             }
         }
         .padding(24)
         .frame(width: 560)
         .onAppear { selectedDeckID = model.selectedDeckID ?? model.decks.first?.id }
+        .onChange(of: kind) { _, newKind in icon = newKind.systemImage }
     }
 }
