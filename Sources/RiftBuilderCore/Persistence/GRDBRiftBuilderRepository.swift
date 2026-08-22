@@ -58,6 +58,7 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
         try await databaseWriter.write { db in
             let generationValue = generation.uuidString
             let completedAtValue = PersistenceCoding.date(completedAt)
+            let authoritativeLocationKeys = Set(locations.map(\.normalizedName))
             var observed: [String: InventoryLocation] = Dictionary(
                 uniqueKeysWithValues: locations.map { ($0.normalizedName, $0) }
             )
@@ -71,6 +72,7 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
 
             for (key, location) in observed {
                 let displayName = location.name
+                let isAuthoritative = authoritativeLocationKeys.contains(key)
                 try db.execute(sql: """
                     INSERT INTO observed_location (location_key, display_name, color, icon, last_seen_at)
                     VALUES (?, ?, ?, ?, ?)
@@ -85,11 +87,20 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                         location_key, display_name, color, icon, kind, counts_as_available, linked_deck_id, last_seen_at
                     ) VALUES (?, ?, ?, ?, 'storage', 1, NULL, ?)
                     ON CONFLICT(location_key) DO UPDATE SET
-                        display_name = excluded.display_name,
-                        color = excluded.color,
-                        icon = excluded.icon,
+                        display_name = CASE WHEN ? THEN excluded.display_name ELSE location_policy.display_name END,
+                        color = CASE WHEN ? THEN excluded.color ELSE location_policy.color END,
+                        icon = CASE WHEN ? THEN excluded.icon ELSE location_policy.icon END,
                         last_seen_at = excluded.last_seen_at
-                    """, arguments: [key, displayName, location.color, location.icon, completedAtValue])
+                    """, arguments: [
+                        key,
+                        displayName,
+                        location.color,
+                        location.icon,
+                        completedAtValue,
+                        isAuthoritative,
+                        isAuthoritative,
+                        isAuthoritative,
+                    ])
             }
 
             for line in lines {

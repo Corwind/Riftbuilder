@@ -55,3 +55,20 @@ If `xcode-select` points at standalone Command Line Tools, select Xcode first:
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 ```
+
+## GitHub releases
+
+A merged pull request triggers a release only when that pull request changed `CHANGELOG.md`. Before opening the pull request, add a new release above the existing entries using `## [MAJOR.MINOR.PATCH] - YYYY-MM-DD`, include at least one bullet describing a main change, set `CFBundleShortVersionString` in `Support/Info.plist` to the same version, and increment the positive integer `CFBundleVersion`. Pull-request CI rejects malformed SemVer, missing change bullets, bundle-version mismatches, and versions whose `vMAJOR.MINOR.PATCH` tag already exists.
+
+The release workflow builds the merged revision in release mode and packages the executable, Info.plist, and SwiftPM resource bundles as a conventional `.app`. Signing runs in a separate job that never checks out or executes repository code. The app is placed in a versioned DMG beside an Applications shortcut for drag-and-drop installation. The completed DMG and SHA-256 checksum are retained as workflow artifacts and attached to a GitHub Release whose notes come from the newest changelog entry.
+
+If no Apple signing secrets exist, the workflow applies an ad-hoc signature and marks the release as unnotarized. This requires no Apple Account, but Gatekeeper does not treat it as an identified-developer download. Conventional distribution requires the repository owner to join the paid Apple Developer Program and configure Developer ID signing and notarization.
+
+To enable identified-developer releases:
+
+1. In the Apple Developer portal, create a **Developer ID Application** certificate, install it with its private key, export both as a password-protected `.p12`, and Base64-encode that file.
+2. Create an app-specific password for the Apple Account used for notarization and note the Apple Developer Team ID.
+3. In the GitHub repository, create an environment named `release`. Protect it with required reviewers if release approval should be explicit.
+4. Add `MACOS_CERTIFICATE_BASE64`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_SPECIFIC_PASSWORD` as secrets on that environment.
+
+The workflow refuses partial signing configuration. With all five secrets present, it imports the certificate into a random-password ephemeral keychain, discovers the Developer ID identity without printing its name, signs the app with the hardened runtime and a trusted timestamp, creates and signs the DMG, submits it through `notarytool`, staples and validates Apple’s ticket, and removes the certificate and temporary keychain. Neither the signing identity nor any credential is stored in Git history or committed files.

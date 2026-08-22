@@ -48,7 +48,11 @@ public struct ConstructedRuleset: Codable, Hashable, Sendable {
 
 public enum ConstructedRulesetLoader {
     public static func bundled(id: String = "constructed-2026-07-16") throws -> ConstructedRuleset {
-        guard let url = Bundle.module.url(forResource: id, withExtension: "json") else {
+        let packagedBundle = Bundle.main.resourceURL
+            .map { $0.appendingPathComponent("RiftBuilder_RiftBuilderCore.bundle", isDirectory: true) }
+            .flatMap(Bundle.init(url:))
+        let resourceBundle = packagedBundle ?? Bundle.module
+        guard let url = resourceBundle.url(forResource: id, withExtension: "json") else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: "\(id).json"])
         }
         return try JSONDecoder().decode(ConstructedRuleset.self, from: Data(contentsOf: url))

@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Check release trigger
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changelog-changed: ${{ steps.changes.outputs.changelog-changed }}
+
+    steps:
+      - name: Check whether the changelog changed
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MERGED_COMMIT: ${{ github.sha }}
+        run: |
+          pr_number=$(gh api "repos/$GH_REPO/commits/$MERGED_COMMIT/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")] | first | .number // empty')
+          if [ -z "$pr_number" ]; then
+            echo "The main push is not associated with a merged pull request; no release will be created."
+            echo "changelog-changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh api --paginate "repos/$GH_REPO/pulls/$pr_number/files" --jq '.[].filename' | grep -Fxq CHANGELOG.md; then
+            echo "changelog-changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changelog-changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build release app
+    needs: inspect
+    if: needs.inspect.outputs.changelog-changed == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+
+    steps:
+      - name: Check out merged revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate release metadata
+        id: metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(./Scripts/validate-release.sh)
+          if gh api "repos/$GH_REPO/git/ref/tags/v$version" >/dev/null 2>&1; then
+            echo "Tag v$version already exists. Add a new SemVer release to CHANGELOG.md and update Support/Info.plist." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build unsigned app bundle
+        run: ./Scripts/build-release-app.sh
+
+      - name: Upload unsigned bundle for isolated signing
+        uses: actions/upload-artifact@v7
+        with:
+          name: RiftBuilder-v${{ steps.metadata.outputs.version }}-unsigned
+          path: |
+            .build/release-package/RiftBuilder-v${{ steps.metadata.outputs.version }}-unsigned.zip
+            .build/release-package/release-notes.md
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-and-publish:
+    name: Sign and publish release
+    needs:
+      - inspect
+      - build
+    if: needs.inspect.outputs.changelog-changed == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download unsigned bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: RiftBuilder-v${{ needs.build.outputs.version }}-unsigned
+          path: release-input
+
+      - name: Sign, optionally notarize, and package
+        id: signing
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          input_archive="$GITHUB_WORKSPACE/release-input/RiftBuilder-v$VERSION-unsigned.zip"
+          output_dir="$GITHUB_WORKSPACE/release-output"
+          app_path="$output_dir/RiftBuilder.app"
+          dmg_staging="$RUNNER_TEMP/riftbuilder-dmg"
+          output_dmg="$output_dir/RiftBuilder-v$VERSION-macOS.dmg"
+          keychain_path="$RUNNER_TEMP/riftbuilder-signing.keychain-db"
+          certificate_path="$RUNNER_TEMP/riftbuilder-signing.p12"
+          mkdir -p "$output_dir"
+          ditto -x -k "$input_archive" "$output_dir"
+
+          signing_values="$CERTIFICATE_BASE64$CERTIFICATE_PASSWORD$APPLE_ID$APPLE_TEAM_ID$APPLE_APP_SPECIFIC_PASSWORD"
+          if [ -n "$signing_values" ]; then
+            if [ -z "$CERTIFICATE_BASE64" ] || [ -z "$CERTIFICATE_PASSWORD" ] || [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+              echo "Developer ID signing is partially configured. Configure all five release environment secrets or remove all of them for an ad-hoc build." >&2
+              exit 1
+            fi
+
+            keychain_password=$(uuidgen)
+            echo "::add-mask::$keychain_password"
+            trap 'security delete-keychain "$keychain_path" >/dev/null 2>&1 || true; rm -f "$certificate_path"' EXIT
+            printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+            security create-keychain -p "$keychain_password" "$keychain_path"
+            security set-keychain-settings -lut 21600 "$keychain_path"
+            security unlock-keychain -p "$keychain_password" "$keychain_path"
+            security import "$certificate_path" -k "$keychain_path" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" >/dev/null
+            signing_identity=$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')
+            if [ -z "$signing_identity" ]; then
+              echo "The imported certificate does not contain a Developer ID Application signing identity." >&2
+              exit 1
+            fi
+            echo "::add-mask::$signing_identity"
+
+            codesign --force --options runtime --timestamp --sign "$signing_identity" "$app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            signing_status="developer-id"
+          else
+            codesign --force --deep --sign - "$app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            signing_status="ad-hoc"
+          fi
+
+          mkdir -p "$dmg_staging"
+          ditto "$app_path" "$dmg_staging/RiftBuilder.app"
+          ln -s /Applications "$dmg_staging/Applications"
+          hdiutil create -volname "RiftBuilder" -srcfolder "$dmg_staging" -ov -format UDZO "$output_dmg"
+
+          if [ "$signing_status" = "developer-id" ]; then
+            codesign --force --timestamp --sign "$signing_identity" "$output_dmg"
+            codesign --verify --strict --verbose=2 "$output_dmg"
+            xcrun notarytool submit "$output_dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+            xcrun stapler staple "$output_dmg"
+            xcrun stapler validate "$output_dmg"
+            signing_description="Developer ID signed and Apple notarized"
+          else
+            signing_description="Ad-hoc signed and not notarized"
+          fi
+
+          cd "$output_dir"
+          shasum -a 256 "$(basename "$output_dmg")" > "$(basename "$output_dmg").sha256"
+          printf '\n### Distribution signature\n\n%s.\n' "$signing_description" >> "$GITHUB_WORKSPACE/release-input/release-notes.md"
+          echo "status=$signing_description" >> "$GITHUB_OUTPUT"
+
+      - name: Upload downloadable release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: RiftBuilder-v${{ needs.build.outputs.version }}-macOS
+          path: |
+            release-output/RiftBuilder-v${{ needs.build.outputs.version }}-macOS.dmg
+            release-output/RiftBuilder-v${{ needs.build.outputs.version }}-macOS.dmg.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          MERGE_COMMIT: ${{ github.sha }}
+        run: |
+          gh release create "v$VERSION" \
+            "release-output/RiftBuilder-v$VERSION-macOS.dmg" \
+            "release-output/RiftBuilder-v$VERSION-macOS.dmg.sha256" \
+            --repo "$GH_REPO" \
+            --target "$MERGE_COMMIT" \
+            --title "RiftBuilder v$VERSION" \
+            --notes-file release-input/release-notes.md

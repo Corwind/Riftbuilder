@@ -59,11 +59,13 @@ final class RepositoryTests: XCTestCase {
             completedAt: .now
         )
 
-        let card = try XCTUnwrap(try await repository.inventoryCards(search: nil, targetDeckID: nil).first)
+        let inventoryCards = try await repository.inventoryCards(search: nil, targetDeckID: nil)
+        let card = try XCTUnwrap(inventoryCards.first)
         XCTAssertEqual(card.availability.totalOwned, 4)
         XCTAssertEqual(card.availability.availableInStorage, 0)
         XCTAssertEqual(card.availability.otherwiseUnavailable, 4)
-        let policy = try XCTUnwrap(try await repository.locationPolicies().first(where: { $0.normalizedName == "box a" }))
+        let locationPolicies = try await repository.locationPolicies()
+        let policy = try XCTUnwrap(locationPolicies.first(where: { $0.normalizedName == "box a" }))
         XCTAssertEqual(policy.displayName, "My Primary Box")
         XCTAssertEqual(policy.kind, .unavailable)
     }
@@ -95,7 +97,8 @@ final class RepositoryTests: XCTestCase {
             XCTFail("Expected the missing printing foreign key to reject the sweep")
         } catch {}
 
-        let card = try XCTUnwrap(try await repository.inventoryCards(search: nil, targetDeckID: nil).first)
+        let inventoryCards = try await repository.inventoryCards(search: nil, targetDeckID: nil)
+        let card = try XCTUnwrap(inventoryCards.first)
         XCTAssertEqual(card.availability.totalOwned, 3)
     }
 
@@ -122,7 +125,8 @@ final class RepositoryTests: XCTestCase {
         try await repository.saveLocationPolicy(LocationPolicy(normalizedName: "trade", displayName: "Trade", kind: .unavailable, countsAsAvailable: false))
         try await repository.saveDeckEntry(DeckEntry(deckID: target.id, zone: .main, nameSlug: "ahri", quantity: 6))
 
-        let forTarget = try XCTUnwrap(try await repository.inventoryCards(search: nil, targetDeckID: target.id).first)
+        let targetInventoryCards = try await repository.inventoryCards(search: nil, targetDeckID: target.id)
+        let forTarget = try XCTUnwrap(targetInventoryCards.first)
         XCTAssertEqual(forTarget.availability.totalOwned, 10)
         XCTAssertEqual(forTarget.availability.availableInStorage, 3)
         XCTAssertEqual(forTarget.availability.inTargetDeck, 2)
@@ -131,7 +135,8 @@ final class RepositoryTests: XCTestCase {
         XCTAssertEqual(forTarget.availability.required, 6)
         XCTAssertEqual(forTarget.availability.missing, 1)
 
-        let globally = try XCTUnwrap(try await repository.inventoryCards(search: nil, targetDeckID: nil).first)
+        let globalInventoryCards = try await repository.inventoryCards(search: nil, targetDeckID: nil)
+        let globally = try XCTUnwrap(globalInventoryCards.first)
         XCTAssertEqual(globally.availability.inTargetDeck, 0)
         XCTAssertEqual(globally.availability.inOtherDecks, 6)
     }
@@ -149,15 +154,19 @@ final class RepositoryTests: XCTestCase {
         var moved = second
         moved.zone = .main
         try await repository.saveDeckEntry(moved)
-        var snapshot = try XCTUnwrap(try await repository.deckSnapshot(id: deck.id))
+        let savedSnapshot = try await repository.deckSnapshot(id: deck.id)
+        var snapshot = try XCTUnwrap(savedSnapshot)
         XCTAssertEqual(snapshot.entries.count, 1)
         XCTAssertEqual(snapshot.entries.first?.quantity, 3)
 
         try await repository.saveLocationPolicy(LocationPolicy(normalizedName: "deck", displayName: "Deck", kind: .deck, countsAsAvailable: false, linkedDeckID: deck.id))
         try await repository.deleteDeck(id: deck.id)
-        XCTAssertNil(try await repository.deckSnapshot(id: deck.id))
-        XCTAssertTrue(try await repository.decks().isEmpty)
-        let policy = try XCTUnwrap(try await repository.locationPolicies().first)
+        let deletedSnapshot = try await repository.deckSnapshot(id: deck.id)
+        XCTAssertNil(deletedSnapshot)
+        let remainingDecks = try await repository.decks()
+        XCTAssertTrue(remainingDecks.isEmpty)
+        let locationPolicies = try await repository.locationPolicies()
+        let policy = try XCTUnwrap(locationPolicies.first)
         XCTAssertNil(policy.linkedDeckID)
         snapshot = DeckSnapshot(deck: deck, entries: [], identities: [:])
         XCTAssertTrue(snapshot.entries.isEmpty)

@@ -79,6 +79,7 @@ private actor SynchronizerRepositorySpy: RiftBuilderRepository {
     func locationPolicies() async throws -> [LocationPolicy] { [] }
     func saveLocationPolicy(_ policy: LocationPolicy) async throws {}
     func decks() async throws -> [Deck] { [] }
+    func deckLegendDomains() async throws -> [UUID: [String]] { [:] }
     func deckSnapshot(id: UUID) async throws -> DeckSnapshot? { nil }
     func saveDeck(_ deck: Deck) async throws {}
     func deleteDeck(id: UUID) async throws {}
