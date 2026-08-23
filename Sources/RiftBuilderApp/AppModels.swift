@@ -134,6 +134,10 @@ extension AppInventoryCard {
         guard normalizedLocationName != nil else { return availability.totalOwned }
         return visibleLocations(filteredBy: normalizedLocationName).reduce(0) { $0 + $1.quantity }
     }
+
+    var usedInDecksQuantity: Int {
+        availability.inTargetDeck + availability.inOtherDecks
+    }
 }
 
 struct DeckNamingRequest: Identifiable, Hashable {

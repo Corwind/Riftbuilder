@@ -12,11 +12,10 @@ struct AppCardDetail: Identifiable, Hashable {
     let finish: String?
     let language: String?
     let locations: [AppLocationBreakdown]
-    let locationFilter: String?
 
     var id: String { identity.nameSlug }
 
-    init(inventoryCard card: AppInventoryCard, locationFilter: String? = nil) {
+    init(inventoryCard card: AppInventoryCard) {
         identity = card.identity
         imageURL = card.imageURL
         availability = card.availability
@@ -26,8 +25,7 @@ struct AppCardDetail: Identifiable, Hashable {
         preferredPrinting = nil
         finish = card.finish
         language = card.language
-        locations = card.visibleLocations(filteredBy: locationFilter)
-        self.locationFilter = locationFilter
+        locations = card.visibleLocations(filteredBy: nil)
     }
 
     init(catalogueCard card: AppCatalogueCard) {
@@ -41,7 +39,6 @@ struct AppCardDetail: Identifiable, Hashable {
         finish = nil
         language = nil
         locations = []
-        locationFilter = nil
     }
 
     init(identity: CardIdentity, inventoryCard: AppInventoryCard?) {
@@ -55,7 +52,6 @@ struct AppCardDetail: Identifiable, Hashable {
         finish = inventoryCard?.finish
         language = inventoryCard?.language
         locations = inventoryCard?.visibleLocations(filteredBy: nil) ?? []
-        locationFilter = nil
     }
 }
 
@@ -155,13 +151,12 @@ private struct CardDetailSheet: View {
 
                         metadataSection
 
-                        if let availability = card.availability, card.locationFilter == nil {
+                        if let availability = card.availability {
                             HStack(spacing: 8) {
-                                QuantityBadge(title: "Owned", value: availability.totalOwned)
-                                QuantityBadge(title: "Available", value: availability.availableInStorage, tint: .green)
-                                if availability.inOtherDecks > 0 {
-                                    QuantityBadge(title: "Other decks", value: availability.inOtherDecks, tint: .orange)
-                                }
+                                QuantityBadge(title: "Total", value: availability.totalOwned)
+                                QuantityBadge(title: "Free", value: availability.availableInStorage, tint: .green)
+                                let used = availability.inTargetDeck + availability.inOtherDecks
+                                QuantityBadge(title: "Used", value: used, tint: .orange)
                             }
                         }
 
@@ -207,7 +202,7 @@ private struct CardDetailSheet: View {
     }
 
     private var locationSection: some View {
-        detailSection(card.locationFilter == nil ? "Locations" : "Selected location") {
+        detailSection("Locations") {
             VStack(spacing: 0) {
                 ForEach(Array(card.locations.enumerated()), id: \.element.id) { index, location in
                     HStack(spacing: 10) {
