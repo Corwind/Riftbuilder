@@ -117,6 +117,25 @@ struct AppInventoryCard: Identifiable, Hashable, Sendable {
     }
 }
 
+extension AppInventoryCard {
+    func visibleLocations(filteredBy normalizedLocationName: String?) -> [AppLocationBreakdown] {
+        locations
+            .filter { location in
+                location.quantity > 0
+                    && location.kind != .unavailable
+                    && normalizedLocationName.map { $0 == location.normalizedName } != false
+            }
+            .sorted { lhs, rhs in
+                lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
+    }
+
+    func displayedInventoryQuantity(filteredBy normalizedLocationName: String?) -> Int {
+        guard normalizedLocationName != nil else { return availability.totalOwned }
+        return visibleLocations(filteredBy: normalizedLocationName).reduce(0) { $0 + $1.quantity }
+    }
+}
+
 struct DeckNamingRequest: Identifiable, Hashable {
     enum Purpose: Hashable {
         case create

@@ -105,6 +105,9 @@ final class RepositoryTests: XCTestCase {
         XCTAssertEqual(card.availability.availableInStorage, 6)
         XCTAssertEqual(card.locations.map(\.quantity).reduce(0, +), 6)
         XCTAssertEqual(Set(card.locations.map(\.normalizedLocationName)), ["box a", "box b", "__unlocated__"])
+        XCTAssertEqual(card.locations.first(where: { $0.normalizedLocationName == "box a" })?.quantity, 3)
+        XCTAssertEqual(card.locations.first(where: { $0.normalizedLocationName == "box b" })?.quantity, 1)
+        XCTAssertEqual(card.locations.first(where: { $0.normalizedLocationName == "__unlocated__" })?.quantity, 2)
     }
 
     func testSuccessfulSweepDeletesStaleLinesButKeepsLocationClassification() async throws {

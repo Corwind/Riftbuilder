@@ -64,14 +64,14 @@ struct InventoryView: View {
                 Group {
                     if model.inventoryPresentation == .table {
                         InventoryTable(model: model) { card in
-                            presentedCard = AppCardDetail(inventoryCard: card)
+                            presentedCard = AppCardDetail(inventoryCard: card, locationFilter: model.inventoryLocationFilter)
                         }
                     } else {
                         ScrollView {
                             LazyVGrid(columns: gridColumns, spacing: 14) {
                                 ForEach(model.filteredInventory) { card in
-                                    InventoryGridCard(card: card) {
-                                        presentedCard = AppCardDetail(inventoryCard: card)
+                                    InventoryGridCard(card: card, locationFilter: model.inventoryLocationFilter) {
+                                        presentedCard = AppCardDetail(inventoryCard: card, locationFilter: model.inventoryLocationFilter)
                                     }
                                 }
                             }
@@ -107,27 +107,37 @@ private struct InventoryTable: View {
             }
             .width(min: 210, ideal: 280)
 
-            TableColumn("Total") { card in
-                Text(card.availability.totalOwned, format: .number).monospacedDigit()
-            }
-            .width(55)
-
-            TableColumn("Available") { card in
-                Text(card.availability.availableInStorage, format: .number)
+            TableColumn("Quantity") { card in
+                Text(card.displayedInventoryQuantity(filteredBy: model.inventoryLocationFilter), format: .number)
                     .monospacedDigit()
-                    .foregroundStyle(card.availability.availableInStorage > 0 ? .green : .secondary)
             }
-            .width(75)
+            .width(65)
 
-            TableColumn("This deck") { card in
-                Text(card.availability.inTargetDeck, format: .number).monospacedDigit()
-            }
-            .width(75)
+            if model.inventoryLocationFilter == nil {
+                TableColumn("Available") { card in
+                    Text(card.availability.availableInStorage, format: .number)
+                        .monospacedDigit()
+                        .foregroundStyle(card.availability.availableInStorage > 0 ? .green : .secondary)
+                }
+                .width(75)
 
-            TableColumn("Other decks") { card in
-                Text(card.availability.inOtherDecks, format: .number).monospacedDigit()
+                TableColumn("This deck") { card in
+                    Text(card.availability.inTargetDeck, format: .number).monospacedDigit()
+                }
+                .width(75)
+
+                TableColumn("Other decks") { card in
+                    Text(card.availability.inOtherDecks, format: .number).monospacedDigit()
+                }
+                .width(80)
             }
-            .width(80)
+
+            TableColumn("Locations") { card in
+                InventoryTableLocationSummary(
+                    locations: card.visibleLocations(filteredBy: model.inventoryLocationFilter)
+                )
+            }
+            .width(min: 170, ideal: 260)
         }
         .accessibilityLabel("Inventory cards")
     }
@@ -135,7 +145,12 @@ private struct InventoryTable: View {
 
 private struct InventoryGridCard: View {
     let card: AppInventoryCard
+    let locationFilter: String?
     let openCard: () -> Void
+
+    private var displayedLocations: [AppLocationBreakdown] {
+        card.visibleLocations(filteredBy: locationFilter)
+    }
 
     var body: some View {
         ArtworkFirstGridCard(
@@ -145,13 +160,82 @@ private struct InventoryGridCard: View {
             isRune: card.identity.appIsRune,
             openCard: openCard
         ) {
-            AdaptiveBadgeLayout(spacing: 6) {
-                QuantityBadge(title: "Owned", value: card.availability.totalOwned)
-                QuantityBadge(title: "Free", value: card.availability.availableInStorage, tint: .green)
+            VStack(alignment: .leading, spacing: 7) {
+                if locationFilter == nil {
+                    AdaptiveBadgeLayout(spacing: 6) {
+                        QuantityBadge(title: "Owned", value: card.availability.totalOwned)
+                        QuantityBadge(title: "Free", value: card.availability.availableInStorage, tint: .green)
+                    }
+                }
+                InventoryGridLocationSummary(locations: displayedLocations)
             }
+            .frame(height: 84, alignment: .topLeading)
         } controls: {
             EmptyView()
         }
+    }
+}
+
+private struct InventoryGridLocationSummary: View {
+    let locations: [AppLocationBreakdown]
+
+    private let maximumVisibleLocations = 2
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(locations.prefix(maximumVisibleLocations))) { location in
+                InventoryCompactLocationRow(location: location)
+            }
+            if locations.count > maximumVisibleLocations {
+                Text("+\(locations.count - maximumVisibleLocations) more location\(locations.count - maximumVisibleLocations == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if locations.isEmpty {
+                Text("No visible locations")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct InventoryCompactLocationRow: View {
+    let location: AppLocationBreakdown
+
+    var body: some View {
+        HStack(spacing: 5) {
+            LocationColorSwatch(value: location.color, size: 8)
+            Text(location.displayName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(location.quantity, format: .number)
+                .monospacedDigit()
+                .fontWeight(.semibold)
+        }
+        .font(.caption2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(location.displayName), \(location.quantity) cards")
+    }
+}
+
+private struct InventoryTableLocationSummary: View {
+    let locations: [AppLocationBreakdown]
+
+    private var summary: String {
+        guard !locations.isEmpty else { return "No visible locations" }
+        return locations.map { "\($0.displayName) \($0.quantity)" }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Text(summary)
+            .font(.caption)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .help(summary)
     }
 }
 
