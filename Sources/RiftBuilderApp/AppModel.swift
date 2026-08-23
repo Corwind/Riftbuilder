@@ -23,6 +23,7 @@ final class AppModel {
     var locationLoadState: ContentLoadState = .idle
     var decks: [Deck] = []
     var deckDomains: [UUID: [String]] = [:]
+    var validatedLegalDeckIDs: Set<UUID> = []
     var deckLoadState: ContentLoadState = .idle
     var selectedDeckID: UUID?
     var selectedDeckSnapshot: DeckSnapshot?
@@ -192,6 +193,7 @@ final class AppModel {
             let (loadedDecks, loadedDomains) = try await (decksTask, domainsTask)
             decks = loadedDecks
             deckDomains = loadedDomains
+            validatedLegalDeckIDs = await legalDeckIDs(in: loadedDecks)
             deckLoadState = .loaded
             if selectedDeckID == nil { selectedDeckID = decks.first?.id }
             await loadSelectedDeck()
@@ -210,14 +212,47 @@ final class AppModel {
             selectedDeckSnapshot = try await service.beginDeckDraft(id: selectedDeckID)?.deckSnapshot
             if let selectedDeckSnapshot {
                 validationIssues = await service.validationIssues(for: selectedDeckSnapshot)
+                updateLegality(for: selectedDeckID, validationIssues: validationIssues)
                 let domains = selectedDeckSnapshot.entries
                     .filter { $0.zone == .legend }
                     .flatMap { selectedDeckSnapshot.identities[$0.nameSlug]?.appVisibleDomains ?? [] }
                 deckDomains[selectedDeckID] = domains
+            } else {
+                validatedLegalDeckIDs.remove(selectedDeckID)
             }
             await loadInventory()
         } catch {
             notice = error.localizedDescription
+        }
+    }
+
+    private func legalDeckIDs(in decks: [Deck]) async -> Set<UUID> {
+        var result: Set<UUID> = []
+        for deck in decks {
+            do {
+                let snapshot: DeckSnapshot?
+                if let draft = try await service.deckDraftSnapshot(id: deck.id) {
+                    snapshot = draft.deckSnapshot
+                } else {
+                    snapshot = try await service.deckSnapshot(id: deck.id)
+                }
+                guard let snapshot else { continue }
+                let issues = await service.validationIssues(for: snapshot)
+                if issues.allSatisfy({ $0.severity != .error }) {
+                    result.insert(deck.id)
+                }
+            } catch {
+                continue
+            }
+        }
+        return result
+    }
+
+    private func updateLegality(for deckID: UUID, validationIssues: [DeckValidationIssue]) {
+        if validationIssues.allSatisfy({ $0.severity != .error }) {
+            validatedLegalDeckIDs.insert(deckID)
+        } else {
+            validatedLegalDeckIDs.remove(deckID)
         }
     }
 
