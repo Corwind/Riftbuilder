@@ -32,16 +32,22 @@ struct InventoryView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 160)
 
-                Picker("Location", selection: $model.inventoryLocationFilter) {
-                    Text("All Locations").tag(nil as String?)
-                    ForEach(model.visibleLocations) { location in
-                        Text(location.displayName).tag(location.normalizedName as String?)
-                    }
-                }
-                .frame(width: 170)
+                inventoryLocationPicker
             }
         }
         .cardDetailSheet(item: $presentedCard)
+    }
+
+    private var inventoryLocationPicker: some View {
+        let totalsByLocation = model.inventoryTotalsByLocation
+        return Picker("Location", selection: $model.inventoryLocationFilter) {
+            Text("All Locations (\(model.inventoryTotal))").tag(nil as String?)
+            ForEach(model.visibleLocations) { location in
+                Text("\(location.displayName) (\(totalsByLocation[location.normalizedName, default: 0]))")
+                    .tag(location.normalizedName as String?)
+            }
+        }
+        .frame(width: 190)
     }
 
     @ViewBuilder
