@@ -2,6 +2,16 @@
 
 All notable changes to RiftBuilder are recorded in this file. RiftBuilder follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-23
+
+### Added
+
+- Added a validation checkmark beside legal deck names in the deck library.
+
+### Fixed
+
+- Prevented card category changes, including Chosen Champion and Main Deck transitions, from producing storage movements when the deck's physical card quantity is unchanged.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added

@@ -38,9 +38,8 @@ public struct DeckSavePlanner: Sendable {
 
         let savedQuantities = Self.physicalQuantities(request.savedDeck.entries, availability: request.inventoryAvailability)
         let draftQuantities = Self.physicalQuantities(request.draft.entries, availability: request.inventoryAvailability)
-        let changedRequirements = Set(savedQuantities.keys).union(draftQuantities.keys).filter {
-            savedQuantities[$0, default: 0] != draftQuantities[$0, default: 0]
-        }.sorted(by: Self.requirementLessThan)
+        let physicalChanges = Self.physicalChanges(saved: savedQuantities, draft: draftQuantities)
+        let changedRequirements = physicalChanges.keys.sorted(by: Self.requirementLessThan)
         let destinations = request.removalDestinations.reduce(into: [DeckReturnRouteKey: String]()) { result, destination in
             result[DeckReturnRouteKey(requirement: destination.requirement, originLotID: destination.originLotID)] = destination.locationName.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -63,7 +62,7 @@ public struct DeckSavePlanner: Sendable {
         var routeAllocations: [DeckReturnRouteKey: ReturnRouteAllocation] = [:]
         var results: [DeckSaveRequirementResult] = []
         for requirement in changedRequirements {
-            let change = draftQuantities[requirement, default: 0] - savedQuantities[requirement, default: 0]
+            let change = physicalChanges[requirement, default: 0]
             if change > 0 {
                 var remaining = change
                 let allocated = consume(requirement: requirement, requested: &remaining, lots: &storageLots) { line in
@@ -224,6 +223,49 @@ private extension DeckSavePlanner {
             guard entry.quantity > 0, !availability.isAlwaysAvailable(entry.zone) else { return }
             result[DeckPhysicalRequirementKey(entry: entry), default: 0] += entry.quantity
         }
+    }
+
+    static func physicalChanges(
+        saved: [DeckPhysicalRequirementKey: Int],
+        draft: [DeckPhysicalRequirementKey: Int]
+    ) -> [DeckPhysicalRequirementKey: Int] {
+        // Zone changes and preference rewrites still describe the same physical
+        // card in the deck. Cancel opposing deltas for a card name before
+        // planning storage movements, leaving only its net membership change.
+        let requirements = Set(saved.keys).union(draft.keys)
+        let grouped = Dictionary(grouping: requirements, by: \.nameSlug)
+        var changes: [DeckPhysicalRequirementKey: Int] = [:]
+
+        for nameSlug in grouped.keys.sorted() {
+            let keys = grouped[nameSlug, default: []].sorted(by: requirementLessThan)
+            var additions = keys.compactMap { key -> (DeckPhysicalRequirementKey, Int)? in
+                let change = draft[key, default: 0] - saved[key, default: 0]
+                return change > 0 ? (key, change) : nil
+            }
+            var removals = keys.compactMap { key -> (DeckPhysicalRequirementKey, Int)? in
+                let change = saved[key, default: 0] - draft[key, default: 0]
+                return change > 0 ? (key, change) : nil
+            }
+
+            var additionIndex = 0
+            var removalIndex = 0
+            while additionIndex < additions.count, removalIndex < removals.count {
+                let cancelled = min(additions[additionIndex].1, removals[removalIndex].1)
+                additions[additionIndex].1 -= cancelled
+                removals[removalIndex].1 -= cancelled
+                if additions[additionIndex].1 == 0 { additionIndex += 1 }
+                if removals[removalIndex].1 == 0 { removalIndex += 1 }
+            }
+
+            for (key, quantity) in additions where quantity > 0 {
+                changes[key] = quantity
+            }
+            for (key, quantity) in removals where quantity > 0 {
+                changes[key] = -quantity
+            }
+        }
+
+        return changes
     }
 
     static func requirementLessThan(_ lhs: DeckPhysicalRequirementKey, _ rhs: DeckPhysicalRequirementKey) -> Bool {

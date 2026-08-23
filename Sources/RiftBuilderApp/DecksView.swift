@@ -101,9 +101,19 @@ struct DecksView: View {
             model.selectedDeckID = deck.id
         } label: {
             VStack(alignment: .leading, spacing: 7) {
-                Text(deck.name)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    Text(deck.name)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if model.validatedLegalDeckIDs.contains(deck.id) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.green)
+                            .accessibilityLabel("Validated legal deck")
+                            .help("Validated legal deck")
+                    }
+                }
                 if let domains = model.deckDomains[deck.id], !domains.isEmpty {
                     GridCardDomainTags(domains: domains, isRune: false)
                 }
