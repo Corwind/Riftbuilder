@@ -163,6 +163,119 @@ final class DeckSavePlannerBehaviorTests: XCTestCase {
         XCTAssertTrue(plan.requirements.isEmpty)
     }
 
+    func testMovingExplicitChosenChampionToGenericMainDeckDoesNotMoveInventory() throws {
+        let chosenChampion = DeckEntry(
+            deckID: fixtureDeckID,
+            zone: .chosenChampion,
+            nameSlug: "ahri",
+            quantity: 1,
+            preferredProductID: 1,
+            preferredFinish: "normal",
+            preferredLanguage: "en"
+        )
+        let fixture = SavePlanFixture(
+            saved: [chosenChampion],
+            draft: [entry("ahri", zone: .main, quantity: 1)]
+        )
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal")])
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertTrue(plan.movements.isEmpty)
+        XCTAssertTrue(plan.requirements.isEmpty)
+        XCTAssertTrue(plan.returnRoutes.isEmpty)
+    }
+
+    func testMovingExplicitMainDeckCardToGenericChosenChampionDoesNotMoveInventory() throws {
+        let mainCard = DeckEntry(
+            deckID: fixtureDeckID,
+            zone: .main,
+            nameSlug: "ahri",
+            quantity: 1,
+            preferredProductID: 1,
+            preferredFinish: "normal",
+            preferredLanguage: "en"
+        )
+        let fixture = SavePlanFixture(
+            saved: [mainCard],
+            draft: [entry("ahri", zone: .chosenChampion, quantity: 1)]
+        )
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal")])
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertTrue(plan.movements.isEmpty)
+        XCTAssertTrue(plan.requirements.isEmpty)
+        XCTAssertTrue(plan.returnRoutes.isEmpty)
+    }
+
+    func testZoneAndPreferenceChangeWithNetAdditionOnlyMovesTheAddedCopyIntoDeck() throws {
+        let chosenChampion = DeckEntry(
+            deckID: fixtureDeckID,
+            zone: .chosenChampion,
+            nameSlug: "ahri",
+            quantity: 1,
+            preferredProductID: 1,
+            preferredFinish: "normal",
+            preferredLanguage: "en"
+        )
+        let fixture = SavePlanFixture(
+            saved: [chosenChampion],
+            draft: [entry("ahri", zone: .main, quantity: 2)]
+        )
+
+        let plan = try fixture.plan(inventory: fixture.inventory(lines: [
+            line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal"),
+            line("box-ahri", productID: 1, quantity: 1, location: "Box A"),
+        ]))
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.movements.count, 1)
+        XCTAssertEqual(plan.movements.first?.inventoryID, "box-ahri")
+        XCTAssertEqual(plan.movements.first?.quantity, 1)
+        XCTAssertEqual(plan.movements.first?.destinationLocationName, "Deck Ezreal")
+        XCTAssertEqual(plan.requirements.map(\.direction), [.intoDeck])
+        XCTAssertEqual(plan.requirements.map(\.requested), [1])
+        XCTAssertTrue(plan.returnRoutes.isEmpty)
+    }
+
+    func testZoneAndPreferenceChangeWithNetRemovalOnlyReturnsTheRemovedCopy() throws {
+        let chosenChampion = DeckEntry(
+            deckID: fixtureDeckID,
+            zone: .chosenChampion,
+            nameSlug: "ahri",
+            quantity: 2,
+            preferredProductID: 1,
+            preferredFinish: "normal",
+            preferredLanguage: "en"
+        )
+        let fixture = SavePlanFixture(
+            saved: [chosenChampion],
+            draft: [entry("ahri", zone: .main, quantity: 1)]
+        )
+        let requirement = DeckPhysicalRequirementKey(
+            nameSlug: "ahri",
+            preference: PrintingPreference(productID: 1, finish: "normal", language: "en")
+        )
+
+        let plan = try fixture.plan(
+            inventory: fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 2, location: "Deck Ezreal")]),
+            destinations: [DeckRemovalDestination(requirement: requirement, locationName: "Box A")]
+        )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.movements.count, 1)
+        XCTAssertEqual(plan.movements.first?.inventoryID, "deck-ahri")
+        XCTAssertEqual(plan.movements.first?.quantity, 1)
+        XCTAssertEqual(plan.movements.first?.destinationLocationName, "Box A")
+        XCTAssertEqual(plan.requirements.map(\.direction), [.outOfDeck])
+        XCTAssertEqual(plan.requirements.map(\.requested), [1])
+    }
+
     func testAlwaysAvailableBattlefieldsDoNotCreateSaveMovements() throws {
         let fixture = SavePlanFixture(
             saved: [],
