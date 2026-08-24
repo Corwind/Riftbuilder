@@ -32,16 +32,22 @@ struct InventoryView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 160)
 
-                Picker("Location", selection: $model.inventoryLocationFilter) {
-                    Text("All Locations").tag(nil as String?)
-                    ForEach(model.visibleLocations) { location in
-                        Text(location.displayName).tag(location.normalizedName as String?)
-                    }
-                }
-                .frame(width: 170)
+                inventoryLocationPicker
             }
         }
         .cardDetailSheet(item: $presentedCard)
+    }
+
+    private var inventoryLocationPicker: some View {
+        let totalsByLocation = model.inventoryTotalsByLocation
+        return Picker("Location", selection: $model.inventoryLocationFilter) {
+            Text("All Locations (\(model.inventoryTotal))").tag(nil as String?)
+            ForEach(model.visibleLocations) { location in
+                Text("\(location.displayName) (\(totalsByLocation[location.normalizedName, default: 0]))")
+                    .tag(location.normalizedName as String?)
+            }
+        }
+        .frame(width: 190)
     }
 
     @ViewBuilder
@@ -70,7 +76,7 @@ struct InventoryView: View {
                         ScrollView {
                             LazyVGrid(columns: gridColumns, spacing: 14) {
                                 ForEach(model.filteredInventory) { card in
-                                    InventoryGridCard(card: card) {
+                                    InventoryGridCard(card: card, locationFilter: model.inventoryLocationFilter) {
                                         presentedCard = AppCardDetail(inventoryCard: card)
                                     }
                                 }
@@ -108,26 +114,26 @@ private struct InventoryTable: View {
             .width(min: 210, ideal: 280)
 
             TableColumn("Total") { card in
-                Text(card.availability.totalOwned, format: .number).monospacedDigit()
+                Text(card.displayedInventoryQuantity(filteredBy: model.inventoryLocationFilter), format: .number)
+                    .monospacedDigit()
             }
             .width(55)
 
-            TableColumn("Available") { card in
-                Text(card.availability.availableInStorage, format: .number)
-                    .monospacedDigit()
-                    .foregroundStyle(card.availability.availableInStorage > 0 ? .green : .secondary)
-            }
-            .width(75)
+            if model.inventoryLocationFilter == nil {
+                TableColumn("Free") { card in
+                    Text(card.availability.availableInStorage, format: .number)
+                        .monospacedDigit()
+                        .foregroundStyle(card.availability.availableInStorage > 0 ? .green : .secondary)
+                }
+                .width(55)
 
-            TableColumn("This deck") { card in
-                Text(card.availability.inTargetDeck, format: .number).monospacedDigit()
+                TableColumn("Used") { card in
+                    Text(card.usedInDecksQuantity, format: .number)
+                        .monospacedDigit()
+                        .foregroundStyle(card.usedInDecksQuantity > 0 ? .orange : .secondary)
+                }
+                .width(55)
             }
-            .width(75)
-
-            TableColumn("Other decks") { card in
-                Text(card.availability.inOtherDecks, format: .number).monospacedDigit()
-            }
-            .width(80)
         }
         .accessibilityLabel("Inventory cards")
     }
@@ -135,6 +141,7 @@ private struct InventoryTable: View {
 
 private struct InventoryGridCard: View {
     let card: AppInventoryCard
+    let locationFilter: String?
     let openCard: () -> Void
 
     var body: some View {
@@ -145,10 +152,18 @@ private struct InventoryGridCard: View {
             isRune: card.identity.appIsRune,
             openCard: openCard
         ) {
-            AdaptiveBadgeLayout(spacing: 6) {
-                QuantityBadge(title: "Owned", value: card.availability.totalOwned)
-                QuantityBadge(title: "Free", value: card.availability.availableInStorage, tint: .green)
+            VStack(alignment: .leading, spacing: 7) {
+                AdaptiveBadgeLayout(spacing: 6) {
+                    if locationFilter == nil {
+                        QuantityBadge(title: "Total", value: card.availability.totalOwned)
+                        QuantityBadge(title: "Free", value: card.availability.availableInStorage, tint: .green)
+                        QuantityBadge(title: "Used", value: card.usedInDecksQuantity, tint: .orange)
+                    } else {
+                        QuantityBadge(title: "Total", value: card.displayedInventoryQuantity(filteredBy: locationFilter))
+                    }
+                }
             }
+            .frame(height: 24, alignment: .topLeading)
         } controls: {
             EmptyView()
         }

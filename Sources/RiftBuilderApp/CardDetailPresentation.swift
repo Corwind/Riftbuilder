@@ -11,6 +11,7 @@ struct AppCardDetail: Identifiable, Hashable {
     let preferredPrinting: CataloguePrintingMetadata?
     let finish: String?
     let language: String?
+    let locations: [AppLocationBreakdown]
 
     var id: String { identity.nameSlug }
 
@@ -24,6 +25,7 @@ struct AppCardDetail: Identifiable, Hashable {
         preferredPrinting = nil
         finish = card.finish
         language = card.language
+        locations = card.visibleLocations(filteredBy: nil)
     }
 
     init(catalogueCard card: AppCatalogueCard) {
@@ -36,6 +38,7 @@ struct AppCardDetail: Identifiable, Hashable {
         preferredPrinting = card.preferredPrinting
         finish = nil
         language = nil
+        locations = []
     }
 
     init(identity: CardIdentity, inventoryCard: AppInventoryCard?) {
@@ -48,6 +51,7 @@ struct AppCardDetail: Identifiable, Hashable {
         preferredPrinting = nil
         finish = inventoryCard?.finish
         language = inventoryCard?.language
+        locations = inventoryCard?.visibleLocations(filteredBy: nil) ?? []
     }
 }
 
@@ -149,12 +153,15 @@ private struct CardDetailSheet: View {
 
                         if let availability = card.availability {
                             HStack(spacing: 8) {
-                                QuantityBadge(title: "Owned", value: availability.totalOwned)
-                                QuantityBadge(title: "Available", value: availability.availableInStorage, tint: .green)
-                                if availability.inOtherDecks > 0 {
-                                    QuantityBadge(title: "Other decks", value: availability.inOtherDecks, tint: .orange)
-                                }
+                                QuantityBadge(title: "Total", value: availability.totalOwned)
+                                QuantityBadge(title: "Free", value: availability.availableInStorage, tint: .green)
+                                let used = availability.inTargetDeck + availability.inOtherDecks
+                                QuantityBadge(title: "Used", value: used, tint: .orange)
                             }
+                        }
+
+                        if !card.locations.isEmpty {
+                            locationSection
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -189,6 +196,34 @@ private struct CardDetailSheet: View {
                 metadataRow("Language", value: card.language?.uppercased())
                 if let printingCount = card.printingCount {
                     metadataRow("Known printings", value: String(printingCount))
+                }
+            }
+        }
+    }
+
+    private var locationSection: some View {
+        detailSection("Locations") {
+            VStack(spacing: 0) {
+                ForEach(Array(card.locations.enumerated()), id: \.element.id) { index, location in
+                    HStack(spacing: 10) {
+                        LocationColorSwatch(value: location.color, size: 12)
+                        Image(systemName: location.kind.systemImage)
+                            .frame(width: 18)
+                            .foregroundStyle(location.isAvailable ? .green : .secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(location.displayName)
+                            Text(location.kind.appTitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(location.quantity, format: .number)
+                            .font(.body.monospacedDigit().weight(.semibold))
+                    }
+                    .padding(.vertical, 5)
+                    if index < card.locations.count - 1 {
+                        Divider()
+                    }
                 }
             }
         }

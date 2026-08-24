@@ -125,6 +125,13 @@ final class AppModel {
     }
 
     var inventoryTotal: Int { inventory.reduce(0) { $0 + $1.availability.totalOwned } }
+    var inventoryTotalsByLocation: [String: Int] {
+        inventory.reduce(into: [:]) { result, card in
+            for location in card.locations where location.quantity > 0 {
+                result[location.normalizedName, default: 0] += location.quantity
+            }
+        }
+    }
     var availableTotal: Int { inventory.reduce(0) { $0 + $1.availability.availableInStorage } }
     var deckTotal: Int { inventory.reduce(0) { $0 + $1.availability.inTargetDeck + $1.availability.inOtherDecks } }
 
