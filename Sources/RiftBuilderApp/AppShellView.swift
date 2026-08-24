@@ -3,6 +3,7 @@ import SwiftUI
 struct AppShellView: View {
     @Bindable var model: AppModel
     @Bindable var deckTransfer: DeckTransferModel
+    @Bindable var physicalAssembly: PhysicalAssemblyModel
     @Environment(AppTheme.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
@@ -127,7 +128,7 @@ struct AppShellView: View {
         switch model.destination ?? .inventory {
         case .inventory: InventoryView(model: model)
         case .catalogue: CatalogueView(model: model)
-        case .decks: DecksView(model: model, deckTransfer: deckTransfer)
+        case .decks: DecksView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly)
         case .locations: LocationsView(model: model)
         case .settings: SettingsView(model: model)
         }
