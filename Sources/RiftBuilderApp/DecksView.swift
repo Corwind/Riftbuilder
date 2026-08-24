@@ -17,6 +17,7 @@ private struct DeckCardTypeGroup: Identifiable {
 
 struct DecksView: View {
     @Bindable var model: AppModel
+    @Bindable var deckTransfer: DeckTransferModel
     @State private var presentation: InventoryPresentation = .grid
     @State private var search = ""
     @Environment(AppTheme.self) private var theme
@@ -44,7 +45,7 @@ struct DecksView: View {
                     HSplitView {
                         deckLibrary
                             .frame(minWidth: 210, idealWidth: 245, maxWidth: 300)
-                        DeckEditorView(model: model, presentation: presentation, search: search)
+                        DeckEditorView(model: model, deckTransfer: deckTransfer, presentation: presentation, search: search)
                             .frame(minWidth: 610)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -146,6 +147,7 @@ struct DecksView: View {
 
 private struct DeckEditorView: View {
     @Bindable var model: AppModel
+    @Bindable var deckTransfer: DeckTransferModel
     let presentation: InventoryPresentation
     let search: String
     @State private var mainOrganization: DeckMainOrganization = .alphabetical
@@ -198,6 +200,29 @@ private struct DeckEditorView: View {
             }
             .help("Rename deck")
             Spacer()
+            Menu {
+                Button {
+                    Task { await deckTransfer.copyDeckList(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Copy RiftDeck List", systemImage: "doc.on.doc")
+                }
+                Button {
+                    Task { await deckTransfer.prepareRiftDeckTextExport(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Export RiftDeck Text…", systemImage: "doc.badge.arrow.up")
+                }
+                Divider()
+                Button {
+                    Task { await deckTransfer.prepareExport(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Export RiftBuilder Deck File…", systemImage: "archivebox")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Export deck")
+            .disabled(deckTransfer.isWorking)
             Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                 Image(systemName: "trash")
             }

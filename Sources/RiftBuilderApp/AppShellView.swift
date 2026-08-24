@@ -61,7 +61,7 @@ struct AppShellView: View {
         .fileExporter(
             isPresented: $deckTransfer.isExporterPresented,
             document: deckTransfer.exportDocument,
-            contentType: .riftDeck,
+            contentType: deckTransfer.exportContentType,
             defaultFilename: deckTransfer.exportFilename
         ) { result in
             deckTransfer.exportCompleted(result, appModel: model)
@@ -127,7 +127,7 @@ struct AppShellView: View {
         switch model.destination ?? .inventory {
         case .inventory: InventoryView(model: model)
         case .catalogue: CatalogueView(model: model)
-        case .decks: DecksView(model: model)
+        case .decks: DecksView(model: model, deckTransfer: deckTransfer)
         case .locations: LocationsView(model: model)
         case .settings: SettingsView(model: model)
         }
@@ -186,15 +186,19 @@ struct RiftBuilderCommands: Commands {
             Button("Import Deck…") { deckTransfer.requestImport() }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(deckTransfer.isWorking)
-            Button("Export Selected Deck…") {
-                Task { await deckTransfer.prepareExport(deckID: model.selectedDeckID, appModel: model) }
+            Button("Export RiftDeck Text…") {
+                Task { await deckTransfer.prepareRiftDeckTextExport(deckID: model.selectedDeckID, appModel: model) }
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
             .disabled(model.selectedDeckID == nil || deckTransfer.isWorking)
-            Button("Copy Deck List") {
+            Button("Copy RiftDeck List") {
                 Task { await deckTransfer.copyDeckList(deckID: model.selectedDeckID, appModel: model) }
             }
             .keyboardShortcut("c", modifiers: [.command, .option])
+            .disabled(model.selectedDeckID == nil || deckTransfer.isWorking)
+            Button("Export RiftBuilder Deck File…") {
+                Task { await deckTransfer.prepareExport(deckID: model.selectedDeckID, appModel: model) }
+            }
             .disabled(model.selectedDeckID == nil || deckTransfer.isWorking)
         }
         CommandMenu("Collection") {
