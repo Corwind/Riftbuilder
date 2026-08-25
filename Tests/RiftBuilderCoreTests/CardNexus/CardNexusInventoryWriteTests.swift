@@ -67,7 +67,7 @@ final class CardNexusInventoryWriteTests: XCTestCase {
     }
 
     func testLocationUpdateSendsAllEditableRemoteFieldsToEncodedLocationPath() async throws {
-        let transport = WriteTransport(responses: [writeResponse(#"{"name":"Archive / Blue","color":"#123456","icon":"archivebox"}"#)])
+        let transport = WriteTransport(responses: [writeResponse(##"{"name":"Archive / Blue","color":"#123456","icon":"archivebox"}"##)])
         let location = try await makeWriteClient(transport).updateInventoryLocation(
             InventoryLocationUpdateRequest(currentName: " Box / One ", name: " Archive / Blue ", color: "#123456", icon: "archivebox")
         )
