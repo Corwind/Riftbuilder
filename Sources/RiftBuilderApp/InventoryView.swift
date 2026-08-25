@@ -5,6 +5,7 @@ struct InventoryView: View {
     @Bindable var model: AppModel
     @FocusState private var searchFocused: Bool
     @State private var presentedCard: AppCardDetail?
+    @State private var bulkMoveSelection: BulkMoveSelection?
 
     private let gridColumns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
 
@@ -33,9 +34,26 @@ struct InventoryView: View {
                 .frame(width: 160)
 
                 inventoryLocationPicker
+
+                inventoryDomainFilter
+
+                Button {
+                    bulkMoveSelection = BulkMoveSelection(
+                        cards: model.filteredInventory,
+                        initialSourceLocationKey: model.inventoryLocationFilter,
+                        filterSummary: bulkMoveFilterSummary
+                    )
+                } label: {
+                    Label("Move Results", systemImage: "shippingbox.and.arrow.backward")
+                }
+                .disabled(model.filteredInventory.isEmpty || model.credentialState != .stored || model.syncState.isSyncing)
+                .help("Move every physical copy matching the current inventory results")
             }
         }
         .cardDetailSheet(item: $presentedCard)
+        .sheet(item: $bulkMoveSelection) { selection in
+            BulkMoveInventoryView(selection: selection, model: model)
+        }
     }
 
     private var inventoryLocationPicker: some View {
@@ -48,6 +66,46 @@ struct InventoryView: View {
             }
         }
         .frame(width: 190)
+    }
+
+    private var inventoryDomainFilter: some View {
+        Menu {
+            if !model.inventoryDomainFilters.isEmpty {
+                Button("Clear Domain Filters") { model.inventoryDomainFilters.removeAll() }
+                Divider()
+            }
+            ForEach(model.inventoryDomains, id: \.self) { domain in
+                Toggle(domain, isOn: Binding(
+                    get: { model.inventoryDomainFilters.contains(domain) },
+                    set: { selected in
+                        if selected {
+                            model.inventoryDomainFilters.insert(domain)
+                        } else {
+                            model.inventoryDomainFilters.remove(domain)
+                        }
+                    }
+                ))
+            }
+        } label: {
+            Label(
+                model.inventoryDomainFilters.isEmpty ? "Domains" : "Domains (\(model.inventoryDomainFilters.count))",
+                systemImage: "circle.hexagongrid"
+            )
+        }
+        .help("Show cards matching any selected domain")
+    }
+
+    private var bulkMoveFilterSummary: String {
+        var filters: [String] = []
+        let query = model.inventorySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { filters.append("Search: \(query)") }
+        if !model.inventoryDomainFilters.isEmpty { filters.append("Domains: \(model.inventoryDomainFilters.sorted().joined(separator: ", "))") }
+        if model.inventoryScope == .available { filters.append("Scope: Available") }
+        if let locationKey = model.inventoryLocationFilter,
+           let location = model.locations.first(where: { $0.normalizedName == locationKey }) {
+            filters.append("Location: \(location.displayName)")
+        }
+        return filters.joined(separator: " · ")
     }
 
     @ViewBuilder
