@@ -2,11 +2,11 @@ import XCTest
 @testable import RiftBuilderCore
 
 final class HumanReadableDeckExporterTests: XCTestCase {
-    func testTextExportUsesZoneOrderNamesCountsAndPreferences() {
+    func testTextExportUsesRiftDeckClipboardFormat() throws {
         let deck = Deck(name: "Ahri Control", state: .planned, rulesetID: "constructed-test")
         let identities = [
-            "legend": CardIdentity(nameSlug: "legend", displayName: "Ahri, Nine-Tailed"),
-            "champion": CardIdentity(nameSlug: "champion", displayName: "Ahri, Charmer"),
+            "legend": CardIdentity(nameSlug: "legend", displayName: "Ahri - Nine-Tailed"),
+            "champion": CardIdentity(nameSlug: "champion", displayName: "Ahri - Charmer"),
             "spell": CardIdentity(nameSlug: "spell", displayName: "Called Shot"),
             "rune": CardIdentity(nameSlug: "rune", displayName: "Calm Rune"),
             "field": CardIdentity(nameSlug: "field", displayName: "Dreaming Tree"),
@@ -26,29 +26,34 @@ final class HumanReadableDeckExporterTests: XCTestCase {
         )
 
         XCTAssertEqual(HumanReadableDeckExporter.export(snapshot), """
-            Ahri Control
-            Ruleset: constructed-test
-            State: Planned
+            Legend:
+            1 Ahri, Nine-Tailed
 
-            Legend (1)
-            1x Ahri, Nine-Tailed
+            Champion:
+            1 Ahri, Charmer
 
-            Chosen Champion (1)
-            1x Ahri, Charmer
+            MainDeck:
+            3 Called Shot
 
-            Main Deck (3)
-            3x Called Shot [product 42, foil, en]
+            Battlefields:
+            1 Dreaming Tree
 
-            Runes (12)
-            12x Calm Rune
+            Rune Pool:
+            12 Calm Rune
 
-            Battlefields (1)
-            1x Dreaming Tree
+            Sideboard:
+            2 Backup Plan
+            """ + "\n")
 
-            Sideboard (2)
-            2x Backup Plan
-
-            """)
+        let reparsed = try TextDeckTextParser.parse(HumanReadableDeckExporter.export(snapshot))
+        XCTAssertEqual(reparsed.entries.map { "\($0.zone.rawValue)|\($0.displayName)|\($0.quantity)" }, [
+            "legend|Ahri, Nine-Tailed|1",
+            "chosenChampion|Ahri, Charmer|1",
+            "main|Called Shot|3",
+            "battlefield|Dreaming Tree|1",
+            "rune|Calm Rune|12",
+            "sideboard|Backup Plan|2",
+        ])
     }
 
     func testTextExportFallsBackToSameNameSlugForUnresolvedCards() {
@@ -58,6 +63,6 @@ final class HumanReadableDeckExporterTests: XCTestCase {
             entries: [DeckEntry(deckID: deck.id, zone: .main, nameSlug: "unknown-card", quantity: 2)],
             identities: [:]
         )
-        XCTAssertTrue(HumanReadableDeckExporter.export(snapshot).contains("2x unknown-card"))
+        XCTAssertEqual(HumanReadableDeckExporter.export(snapshot), "MainDeck:\n2 unknown-card\n")
     }
 }

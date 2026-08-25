@@ -2,11 +2,7 @@ import Foundation
 
 public enum HumanReadableDeckExporter {
     public static func export(_ snapshot: DeckSnapshot) -> String {
-        var lines = [
-            snapshot.deck.name,
-            "Ruleset: \(snapshot.deck.rulesetID)",
-            "State: \(snapshot.deck.state.rawValue.capitalized)",
-        ]
+        var sections: [String] = []
 
         for zone in orderedZones {
             let entries = snapshot.entries
@@ -17,32 +13,32 @@ public enum HumanReadableDeckExporter {
                     let comparison = leftName.localizedCaseInsensitiveCompare(rightName)
                     if comparison == .orderedSame { return entrySortKey(lhs) < entrySortKey(rhs) }
                     return comparison == .orderedAscending
-                }
+            }
             guard !entries.isEmpty else { continue }
-            lines.append("")
-            lines.append("\(heading(for: zone)) (\(entries.reduce(0) { $0 + $1.quantity }))")
+            var lines = ["\(heading(for: zone)):"]
             for entry in entries {
                 let name = snapshot.identities[entry.nameSlug]?.displayName ?? entry.nameSlug
-                lines.append("\(entry.quantity)x \(name)\(preferenceSuffix(entry))")
+                lines.append("\(entry.quantity) \(riftDeckName(name))")
             }
+            sections.append(lines.joined(separator: "\n"))
         }
 
-        return lines.joined(separator: "\n") + "\n"
+        return sections.joined(separator: "\n\n") + (sections.isEmpty ? "" : "\n")
     }
 }
 
 private extension HumanReadableDeckExporter {
     static let orderedZones: [DeckZone] = [
-        .legend, .chosenChampion, .main, .rune, .battlefield, .sideboard,
+        .legend, .chosenChampion, .main, .battlefield, .rune, .sideboard,
     ]
 
     static func heading(for zone: DeckZone) -> String {
         switch zone {
         case .legend: return "Legend"
-        case .chosenChampion: return "Chosen Champion"
-        case .main: return "Main Deck"
-        case .rune: return "Runes"
+        case .chosenChampion: return "Champion"
+        case .main: return "MainDeck"
         case .battlefield: return "Battlefields"
+        case .rune: return "Rune Pool"
         case .sideboard: return "Sideboard"
         }
     }
@@ -56,11 +52,7 @@ private extension HumanReadableDeckExporter {
         ].joined(separator: "|")
     }
 
-    static func preferenceSuffix(_ entry: DeckEntry) -> String {
-        var preferences: [String] = []
-        if let productID = entry.preferredProductID { preferences.append("product \(productID)") }
-        if let finish = entry.preferredFinish, !finish.isEmpty { preferences.append(finish) }
-        if let language = entry.preferredLanguage, !language.isEmpty { preferences.append(language) }
-        return preferences.isEmpty ? "" : " [\(preferences.joined(separator: ", "))]"
+    static func riftDeckName(_ displayName: String) -> String {
+        displayName.replacingOccurrences(of: " - ", with: ", ")
     }
 }

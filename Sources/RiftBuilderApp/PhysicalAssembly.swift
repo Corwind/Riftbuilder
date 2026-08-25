@@ -194,7 +194,7 @@ extension LiveAppDataService {
                 .joined(separator: " · ")
             return AppPhysicalMovement(
                 movement: movement,
-                cardName: deck.identities[movement.nameSlug]?.displayName ?? printing?.displayName ?? movement.nameSlug,
+                cardName: deck.identities[movement.nameSlug]?.displayName ?? printing?.displayName ?? "Unknown card (Product \(movement.productID))",
                 printingDescription: details.isEmpty ? "Product \(movement.productID)" : "\(details) · Product \(movement.productID)"
             )
         }
@@ -228,6 +228,9 @@ final class PhysicalAssemblyModel {
     var storageLocations: [LocationPolicy] = []
     var selectedStorageLocationName = ""
     var disassemblyDestinations: [DeckReturnRouteKey: String] = [:]
+    var deletionTargetDeckID: UUID?
+    var deletionCompleted = false
+    var deletionOutcomeMessage: String?
 
     private let service: any PhysicalAssemblyServicing
 
@@ -239,6 +242,9 @@ final class PhysicalAssemblyModel {
         guard let deckID else { appModel.notice = AppPhysicalAssemblyError.deckNotFound.localizedDescription; return }
         phase = .planning
         executionOutcome = nil
+        deletionTargetDeckID = nil
+        deletionCompleted = false
+        deletionOutcomeMessage = nil
         do {
             proposal = try await service.makeAssemblyPlan(deckID: deckID, inventoryAvailability: appModel.deckInventoryAvailability)
             isConfirmationPresented = true
@@ -248,13 +254,26 @@ final class PhysicalAssemblyModel {
         phase = .idle
     }
 
-    func beginDisassembly(deckID: UUID?, appModel: AppModel) async {
+    func beginDisassembly(deckID: UUID?, deletingDefinitionAfterSuccess: Bool = false, appModel: AppModel) async {
         guard let deckID else { appModel.notice = AppPhysicalAssemblyError.deckNotFound.localizedDescription; return }
         phase = .planning
         executionOutcome = nil
+        deletionTargetDeckID = deletingDefinitionAfterSuccess ? deckID : nil
+        deletionCompleted = false
+        deletionOutcomeMessage = nil
         disassemblyDestinations = [:]
         do {
+            if deletingDefinitionAfterSuccess {
+                _ = try await service.synchronize()
+            }
             var plan = try await service.makeDisassemblyPlan(deckID: deckID, removalDestinations: [])
+            if deletingDefinitionAfterSuccess, plan.movements.isEmpty {
+                try await appModel.deleteDeckDefinition(id: deckID)
+                deletionTargetDeckID = nil
+                appModel.notice = "CardNexus confirmed the linked deck location is empty, and the deck definition was deleted."
+                phase = .idle
+                return
+            }
             var requiresReplan = false
             for route in plan.returnRoutes {
                 if let destination = route.destinationLocationName {
@@ -271,7 +290,8 @@ final class PhysicalAssemblyModel {
             proposal = plan
             isConfirmationPresented = true
         } catch {
-            appModel.notice = "Disassembly could not start: \(error.localizedDescription)"
+            deletionTargetDeckID = nil
+            appModel.notice = "\(deletingDefinitionAfterSuccess ? "Deck deletion" : "Disassembly") could not start: \(error.localizedDescription)"
         }
         phase = .idle
     }
@@ -312,6 +332,20 @@ final class PhysicalAssemblyModel {
         do {
             let outcome = try await service.executePhysicalPlan(proposal)
             executionOutcome = outcome
+            if let deckID = deletionTargetDeckID {
+                let reconciled = outcome.reconciledAt != nil && outcome.reconciliationError == nil
+                if DeckDeletionFinalizationPolicy.canDeleteDefinition(after: outcome.report, inventoryWasReconciled: reconciled) {
+                    do {
+                        try await appModel.deleteDeckDefinition(id: deckID)
+                        deletionCompleted = true
+                        deletionOutcomeMessage = "The physical cards were returned and the deck definition was deleted."
+                    } catch {
+                        deletionOutcomeMessage = "The physical cards were returned, but the deck definition could not be deleted: \(error.localizedDescription)"
+                    }
+                } else {
+                    deletionOutcomeMessage = "The deck definition was retained because every move and the inventory reconciliation must succeed before deletion."
+                }
+            }
             await appModel.reloadAll()
             if let error = outcome.reconciliationError {
                 appModel.notice = "CardNexus returned movement results, but reconciliation failed: \(error). Synchronize before retrying or moving more cards."
@@ -326,6 +360,9 @@ final class PhysicalAssemblyModel {
         isConfirmationPresented = false
         proposal = nil
         executionOutcome = nil
+        deletionTargetDeckID = nil
+        deletionCompleted = false
+        deletionOutcomeMessage = nil
     }
 }
 
@@ -342,11 +379,11 @@ struct PhysicalAssemblyConfirmationView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if !proposal.missingRequirements.isEmpty { missingSection(proposal) }
-                        if proposal.kind == .disassembly { disassemblyDestinations(proposal) }
+                        if proposal.kind == .disassembly, workflow.executionOutcome == nil { disassemblyDestinations(proposal) }
                         movementSection(proposal)
                         if let outcome = workflow.executionOutcome { resultSection(outcome) }
                         if workflow.executionOutcome == nil {
-                            Toggle("I reviewed every movement and want to update these physical CardNexus inventory lines.", isOn: $explicitlyConfirmed)
+                            Toggle(workflow.deletionTargetDeckID == nil ? "I reviewed every movement and want to update these physical CardNexus inventory lines." : "I reviewed every return movement and understand the deck definition will be deleted only after CardNexus is reconciled.", isOn: $explicitlyConfirmed)
                                 .toggleStyle(.checkbox)
                         }
                     }
@@ -400,7 +437,7 @@ struct PhysicalAssemblyConfirmationView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(workflow.proposal?.kind == .disassembly ? "Review Disassembly" : "Review Assembly")
+                Text(confirmationTitle)
                     .font(.title2.weight(.semibold))
                 Text(workflow.proposal?.deckName ?? "Deck").foregroundStyle(.secondary)
             }
@@ -408,6 +445,11 @@ struct PhysicalAssemblyConfirmationView: View {
             Button("Close") { workflow.closeConfirmation() }.keyboardShortcut(.cancelAction)
         }
         .padding()
+    }
+
+    private var confirmationTitle: String {
+        if workflow.deletionTargetDeckID != nil { return "Review Disassembly and Deletion" }
+        return workflow.proposal?.kind == .disassembly ? "Review Disassembly" : "Review Assembly"
     }
 
     private func missingSection(_ proposal: AppPhysicalPlan) -> some View {
@@ -471,6 +513,10 @@ struct PhysicalAssemblyConfirmationView: View {
                 } else {
                     Label("Inventory reconciled with CardNexus.", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                 }
+                if let message = workflow.deletionOutcomeMessage {
+                    Label(message, systemImage: workflow.deletionCompleted ? "trash.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(workflow.deletionCompleted ? .green : .orange)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 6)
@@ -479,11 +525,11 @@ struct PhysicalAssemblyConfirmationView: View {
 
     private func footer(_ proposal: AppPhysicalPlan) -> some View {
         HStack {
-            Text(proposal.canExecute ? "This changes CardNexus, which may split source inventory lines." : "Resolve missing cards or choose a plan with physical movements.")
+            Text(footerMessage(for: proposal))
                 .font(.callout).foregroundStyle(.secondary)
             Spacer()
             if workflow.executionOutcome == nil {
-                Button(workflow.phase == .executing ? "Updating CardNexus…" : "Confirm and Move \(proposal.movements.count) Lines") {
+                Button(executionButtonTitle(for: proposal)) {
                     Task { await workflow.execute(appModel: appModel) }
                 }
                 .buttonStyle(.borderedProminent)
@@ -493,6 +539,20 @@ struct PhysicalAssemblyConfirmationView: View {
             }
         }
         .padding()
+    }
+
+    private func footerMessage(for proposal: AppPhysicalPlan) -> String {
+        guard proposal.canExecute else { return "Resolve missing cards or choose a plan with physical movements." }
+        if workflow.deletionTargetDeckID != nil {
+            return "The deck definition is retained unless every CardNexus movement succeeds and inventory reconciliation completes."
+        }
+        return "This changes CardNexus, which may split source inventory lines."
+    }
+
+    private func executionButtonTitle(for proposal: AppPhysicalPlan) -> String {
+        if workflow.phase == .executing { return "Updating CardNexus…" }
+        if workflow.deletionTargetDeckID != nil { return "Return Cards and Delete Deck" }
+        return "Confirm and Move \(proposal.movements.count) Lines"
     }
 }
 

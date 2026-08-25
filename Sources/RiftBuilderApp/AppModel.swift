@@ -90,6 +90,20 @@ final class AppModel {
         decks.first { $0.id == selectedDeckID }
     }
 
+    var selectedDeckLocation: LocationPolicy? {
+        guard let selectedDeckID else { return nil }
+        return locations.first { $0.kind == .deck && $0.linkedDeckID == selectedDeckID }
+    }
+
+    var selectedDeckPhysicalCardCount: Int {
+        guard let selectedDeckID, let location = selectedDeckLocation else { return 0 }
+        return inventory.reduce(0) { total, card in
+            total + card.locations
+                .filter { $0.linkedDeckID == selectedDeckID || $0.normalizedName == location.normalizedName }
+                .reduce(0) { $0 + $1.quantity }
+        }
+    }
+
     func linkableDecks(for location: LocationPolicy) -> [Deck] {
         let linkedElsewhere = Set(locations.compactMap { candidate -> UUID? in
             guard candidate.normalizedName != location.normalizedName else { return nil }
@@ -382,12 +396,20 @@ final class AppModel {
     func deleteSelectedDeck() async {
         guard let id = selectedDeckID else { return }
         do {
-            try await service.deleteDeck(id: id)
-            selectedDeckID = nil
-            await loadDecks()
+            try await deleteDeckDefinition(id: id)
         } catch {
             notice = error.localizedDescription
         }
+    }
+
+    func deleteDeckDefinition(id: UUID) async throws {
+        try await service.deleteDeck(id: id)
+        if selectedDeckID == id {
+            selectedDeckID = nil
+            selectedDeckSnapshot = nil
+            validationIssues = []
+        }
+        await loadDecks()
     }
 
     func changeQuantity(_ entry: DeckEntry, delta: Int) async {
