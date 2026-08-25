@@ -27,7 +27,7 @@ struct RiftBuilderApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AppShellView(model: model, deckTransfer: deckTransfer)
+            AppShellView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly)
                 .modifier(TextDeckImportHost(workflow: textDeckImport, appModel: model))
                 .modifier(PhysicalAssemblyHost(workflow: physicalAssembly, appModel: model))
                 .modifier(DeckSaveWorkflowHost(workflow: deckSave, appModel: model))

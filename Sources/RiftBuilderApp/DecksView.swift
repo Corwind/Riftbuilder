@@ -17,6 +17,8 @@ private struct DeckCardTypeGroup: Identifiable {
 
 struct DecksView: View {
     @Bindable var model: AppModel
+    @Bindable var deckTransfer: DeckTransferModel
+    @Bindable var physicalAssembly: PhysicalAssemblyModel
     @State private var presentation: InventoryPresentation = .grid
     @State private var search = ""
     @Environment(AppTheme.self) private var theme
@@ -44,7 +46,7 @@ struct DecksView: View {
                     HSplitView {
                         deckLibrary
                             .frame(minWidth: 210, idealWidth: 245, maxWidth: 300)
-                        DeckEditorView(model: model, presentation: presentation, search: search)
+                        DeckEditorView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly, presentation: presentation, search: search)
                             .frame(minWidth: 610)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -146,10 +148,13 @@ struct DecksView: View {
 
 private struct DeckEditorView: View {
     @Bindable var model: AppModel
+    @Bindable var deckTransfer: DeckTransferModel
+    @Bindable var physicalAssembly: PhysicalAssemblyModel
     let presentation: InventoryPresentation
     let search: String
     @State private var mainOrganization: DeckMainOrganization = .alphabetical
     @State private var showingDeleteConfirmation = false
+    @State private var showingDefinitionOnlyConfirmation = false
     @State private var presentedCard: AppCardDetail?
 
     private var snapshot: DeckSnapshot? { model.selectedDeckSnapshot }
@@ -175,9 +180,38 @@ private struct DeckEditorView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .confirmationDialog("Delete \(snapshot.deck.name)?", isPresented: $showingDeleteConfirmation) {
-                Button("Delete Deck", role: .destructive) { Task { await model.deleteSelectedDeck() } }
+                if model.selectedDeckLocation != nil {
+                    Button(model.selectedDeckPhysicalCardCount > 0 ? "Disassemble and Delete…" : "Verify Location and Delete…") {
+                        Task {
+                            await physicalAssembly.beginDisassembly(
+                                deckID: snapshot.deck.id,
+                                deletingDefinitionAfterSuccess: true,
+                                appModel: model
+                            )
+                        }
+                    }
+                    Button("Delete Definition Only…", role: .destructive) {
+                        showingDefinitionOnlyConfirmation = true
+                    }
+                } else {
+                    Button("Delete Deck", role: .destructive) { Task { await model.deleteSelectedDeck() } }
+                }
             } message: {
-                Text("This removes the local deck definition. It does not move or delete inventory in CardNexus.")
+                if let location = model.selectedDeckLocation {
+                    if model.selectedDeckPhysicalCardCount > 0 {
+                        Text("\(model.selectedDeckPhysicalCardCount) physical cards are currently cached in \(location.displayName). RiftBuilder will refresh CardNexus, then let you review where they will be returned before deleting the deck definition.")
+                    } else {
+                        Text("RiftBuilder will refresh CardNexus and verify that \(location.displayName) is empty before deleting the deck definition.")
+                    }
+                } else {
+                    Text("This removes the local deck definition. It has no linked CardNexus location.")
+                }
+            }
+            .alert("Delete Definition Only?", isPresented: $showingDefinitionOnlyConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete Definition Only", role: .destructive) { Task { await model.deleteSelectedDeck() } }
+            } message: {
+                Text("Cards will remain in the CardNexus deck location, but RiftBuilder will remove the location link and its remembered return locations. This cannot be undone automatically.")
             }
             .cardDetailSheet(item: $presentedCard)
         } else if model.selectedDeckID != nil {
@@ -210,6 +244,29 @@ private struct DeckEditorView: View {
             }
             .help("Rename deck")
             Spacer()
+            Menu {
+                Button {
+                    Task { await deckTransfer.copyDeckList(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Copy RiftDeck List", systemImage: "doc.on.doc")
+                }
+                Button {
+                    Task { await deckTransfer.prepareRiftDeckTextExport(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Export RiftDeck Text…", systemImage: "doc.badge.arrow.up")
+                }
+                Divider()
+                Button {
+                    Task { await deckTransfer.prepareExport(deckID: deck.id, appModel: model) }
+                } label: {
+                    Label("Export RiftBuilder Deck File…", systemImage: "archivebox")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Export deck")
+            .disabled(deckTransfer.isWorking)
             Button(role: .destructive) { showingDeleteConfirmation = true } label: {
                 Image(systemName: "trash")
             }
