@@ -81,6 +81,29 @@ public struct InventoryLocationUpsertRequest: Codable, Hashable, Sendable {
     }
 }
 
+public struct InventoryLocationUpdateRequest: Codable, Hashable, Sendable {
+    public let currentName: String
+    public let name: String
+    public let color: String?
+    public let icon: String?
+
+    public init(currentName: String, name: String, color: String? = nil, icon: String? = nil) {
+        self.currentName = currentName
+        self.name = name
+        self.color = color
+        self.icon = icon
+    }
+}
+
+public protocol CardNexusInventoryLocationManaging: Sendable {
+    /// Renames or updates the presentation fields of an existing CardNexus location.
+    func updateInventoryLocation(_ request: InventoryLocationUpdateRequest) async throws -> InventoryLocation
+
+    /// Deletes a CardNexus location. Callers are responsible for enforcing any
+    /// stronger local safety policy, because CardNexus otherwise unlocates its lines.
+    func deleteInventoryLocation(named name: String) async throws
+}
+
 public protocol CardNexusInventoryWriting: Sendable {
     /// Creates the location or returns/updates the case-insensitive match. The
     /// client always sends `upsert: true`, making setup safe to repeat.

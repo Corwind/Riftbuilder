@@ -3,6 +3,93 @@ import XCTest
 @testable import RiftBuilderCore
 
 final class RepositoryTests: XCTestCase {
+    func testReplacingLocationPolicyRenamesInventoryAndOriginRoutesWithoutLosingClassificationOrDeckLink() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        let deck = Deck(name: "Renamed Deck")
+        try await repository.saveDeck(deck)
+        try await repository.replaceCatalogue(printings: [printing(1, slug: "ahri-one")], checksum: "catalogue", completedAt: .now)
+        try await repository.synchronizeInventory(
+            lines: [line("line", productID: 1, quantity: 2, location: "Old Box")],
+            locations: [InventoryLocation(name: "Old Box", color: "red", icon: "shippingbox")],
+            generation: UUID(),
+            completedAt: .now
+        )
+        try await repository.saveLocationPolicy(LocationPolicy(
+            normalizedName: "old box",
+            displayName: "Old Box",
+            color: "red",
+            icon: "shippingbox",
+            kind: .deck,
+            countsAsAvailable: false,
+            linkedDeckID: deck.id
+        ))
+        try await repository.databaseWriter.write { db in
+            try GRDBRiftBuilderRepository.recordOrigin(
+                for: PlannedInventoryMovement(
+                    operationID: "origin",
+                    inventoryID: "line",
+                    productID: 1,
+                    nameSlug: "ahri",
+                    quantity: 1,
+                    sourceLocationName: "Old Box",
+                    destinationLocationName: "Deck"
+                ),
+                deckID: deck.id,
+                at: .now,
+                in: db
+            )
+        }
+
+        let result = try await repository.replaceLocationPolicy(
+            currentNormalizedName: "old box",
+            with: InventoryLocation(name: "New Box", color: "#123456", icon: "archivebox"),
+            kind: .deck,
+            linkedDeckID: deck.id
+        )
+
+        XCTAssertEqual(result.normalizedName, "new box")
+        let policies = try await repository.locationPolicies()
+        XCTAssertNil(policies.first { $0.normalizedName == "old box" })
+        let renamed = try XCTUnwrap(policies.first { $0.normalizedName == "new box" })
+        XCTAssertEqual(renamed.displayName, "New Box")
+        XCTAssertEqual(renamed.color, "#123456")
+        XCTAssertEqual(renamed.icon, "archivebox")
+        XCTAssertEqual(renamed.kind, .deck)
+        XCTAssertEqual(renamed.linkedDeckID, deck.id)
+        let inventory = try await repository.inventoryCards(search: nil, targetDeckID: deck.id)
+        let card = try XCTUnwrap(inventory.first)
+        XCTAssertEqual(card.locations.first?.normalizedLocationName, "new box")
+        XCTAssertEqual(card.locations.first?.displayName, "New Box")
+        let origins = try await repository.deckCardOriginLots(deckID: deck.id)
+        let origin = try XCTUnwrap(origins.first)
+        XCTAssertEqual(origin.previousLocationKey, "new box")
+        XCTAssertEqual(origin.previousLocationName, "New Box")
+    }
+
+    func testDeletingLocationPolicyRequiresItToBeEmpty() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        try await repository.replaceCatalogue(printings: [printing(1, slug: "ahri-one")], checksum: "catalogue", completedAt: .now)
+        try await repository.synchronizeInventory(
+            lines: [line("line", productID: 1, quantity: 2, location: "Full Box")],
+            locations: [InventoryLocation(name: "Full Box"), InventoryLocation(name: "Empty Box")],
+            generation: UUID(),
+            completedAt: .now
+        )
+
+        do {
+            try await repository.deleteEmptyLocationPolicy(normalizedName: "full box")
+            XCTFail("Expected a non-empty location to be rejected")
+        } catch let error as LocationPolicyPersistenceError {
+            XCTAssertEqual(error, .locationNotEmpty(name: "Full Box", cardCount: 2))
+        }
+        let policiesAfterRejectedDeletion = try await repository.locationPolicies()
+        XCTAssertNotNil(policiesAfterRejectedDeletion.first { $0.normalizedName == "full box" })
+
+        try await repository.deleteEmptyLocationPolicy(normalizedName: "empty box")
+        let policiesAfterDeletion = try await repository.locationPolicies()
+        XCTAssertNil(policiesAfterDeletion.first { $0.normalizedName == "empty box" })
+    }
+
     func testDeckLocationLinksAreOneToOneAndOnlyDeckLocationsCanLink() async throws {
         let repository = try GRDBRiftBuilderRepository.inMemory()
         let deck = Deck(name: "Ahri")

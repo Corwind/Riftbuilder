@@ -28,11 +28,11 @@ protocol AppDataServicing: Sendable {
 actor DemoAppDataService: AppDataServicing {
     private var credentialStored = false
     private var lastSync: Date?
-    private var policies: [LocationPolicy]
+    var policies: [LocationPolicy]
     private var storedDecks: [Deck]
     private var snapshots: [UUID: DeckSnapshot]
     private var drafts: [UUID: DeckDraftSnapshot] = [:]
-    private let cards: [AppInventoryCard]
+    let cards: [AppInventoryCard]
 
     init() {
         let ahri = CardIdentity(nameSlug: "ahri-charmer", displayName: "Ahri, Charmer", cardType: "Unit", domains: ["Calm", "Chaos"], tags: ["Champion"], energyCost: 3, mightCost: 2)

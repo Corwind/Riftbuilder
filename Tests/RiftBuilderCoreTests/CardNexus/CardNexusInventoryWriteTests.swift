@@ -66,6 +66,34 @@ final class CardNexusInventoryWriteTests: XCTestCase {
         XCTAssertEqual(json["upsert"] as? Bool, true)
     }
 
+    func testLocationUpdateSendsAllEditableRemoteFieldsToEncodedLocationPath() async throws {
+        let transport = WriteTransport(responses: [writeResponse(##"{"name":"Archive / Blue","color":"#123456","icon":"archivebox"}"##)])
+        let location = try await makeWriteClient(transport).updateInventoryLocation(
+            InventoryLocationUpdateRequest(currentName: " Box / One ", name: " Archive / Blue ", color: "#123456", icon: "archivebox")
+        )
+
+        XCTAssertEqual(location, InventoryLocation(name: "Archive / Blue", color: "#123456", icon: "archivebox"))
+        let captured = await transport.requests()
+        let request = try XCTUnwrap(captured.first)
+        XCTAssertEqual(request.method, "PATCH")
+        XCTAssertEqual(request.percentEncodedPath, "/v1/inventory/locations/Box%20%2F%20One")
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "Archive / Blue")
+        XCTAssertEqual(json["color"] as? String, "#123456")
+        XCTAssertEqual(json["icon"] as? String, "archivebox")
+    }
+
+    func testLocationDeleteUsesDeleteWithEmptyJSONBody() async throws {
+        let transport = WriteTransport(responses: [writeResponse(#"{"deleted":true}"#)])
+        try await makeWriteClient(transport).deleteInventoryLocation(named: "Empty Box")
+
+        let captured = await transport.requests()
+        let request = try XCTUnwrap(captured.first)
+        XCTAssertEqual(request.method, "DELETE")
+        XCTAssertEqual(request.percentEncodedPath, "/v1/inventory/locations/Empty%20Box")
+        XCTAssertEqual(String(decoding: request.body, as: UTF8.self), "{}")
+    }
+
     func testBulkRejectsDuplicateSourceLineWithoutNetworkRequest() async {
         let transport = WriteTransport(responses: [])
         do {
@@ -104,6 +132,7 @@ private struct WriteCredentialStore: CredentialStoring {
 private struct CapturedWriteRequest: Sendable {
     let method: String
     let path: String
+    let percentEncodedPath: String
     let idempotencyKey: String?
     let body: Data
 }
@@ -118,6 +147,7 @@ private actor WriteTransport: HTTPTransport {
         captured.append(CapturedWriteRequest(
             method: request.httpMethod ?? "",
             path: request.url?.path ?? "",
+            percentEncodedPath: request.url.map { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? "" } ?? "",
             idempotencyKey: request.value(forHTTPHeaderField: "Idempotency-Key"),
             body: request.httpBody ?? Data()
         ))
