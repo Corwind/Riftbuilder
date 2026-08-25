@@ -13,6 +13,7 @@ final class AppModel {
     var inventoryScope: InventoryScope = .all
     var inventorySearch = ""
     var inventoryLocationFilter: String?
+    var inventoryDomainFilters: Set<String> = []
     var inventory: [AppInventoryCard] = []
     var inventoryLoadState: ContentLoadState = .idle
     var catalogue: [AppCatalogueCard] = []
@@ -71,11 +72,17 @@ final class AppModel {
             let matchesLocation = inventoryLocationFilter.map { selected in
                 card.locations.contains { $0.normalizedName == selected && $0.quantity > 0 }
             } ?? true
-            guard matchesScope, matchesLocation else { return false }
+            let matchesDomains = inventoryDomainFilters.isEmpty || card.identity.appVisibleDomains.contains { inventoryDomainFilters.contains($0) }
+            guard matchesScope, matchesLocation, matchesDomains else { return false }
             guard !query.isEmpty else { return true }
             let searchableText = [card.identity.appSearchText, card.expansion ?? "", card.rarity ?? ""].joined(separator: " ")
             return searchableText.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    var inventoryDomains: [String] {
+        Set(inventory.flatMap { $0.identity.appVisibleDomains })
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     var visibleLocations: [LocationPolicy] {
