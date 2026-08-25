@@ -166,7 +166,13 @@ private struct DeckEditorView: View {
                     deckHeader(snapshot.deck)
                     deckMetrics(snapshot)
                     validationPanel
-                    ForEach(DeckZone.allCases.sorted { $0.appSortOrder < $1.appSortOrder }, id: \.self) { zone in
+                    HStack(alignment: .top, spacing: 18) {
+                        zoneSection(.legend, snapshot: snapshot)
+                            .frame(maxWidth: .infinity, alignment: .top)
+                        zoneSection(.chosenChampion, snapshot: snapshot)
+                            .frame(maxWidth: .infinity, alignment: .top)
+                    }
+                    ForEach(remainingDeckZones, id: \.self) { zone in
                         zoneSection(zone, snapshot: snapshot)
                     }
                 }
@@ -220,6 +226,12 @@ private struct DeckEditorView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var remainingDeckZones: [DeckZone] {
+        DeckZone.allCases
+            .filter { $0 != .legend && $0 != .chosenChampion }
+            .sorted { $0.appSortOrder < $1.appSortOrder }
     }
 
     private func deckHeader(_ deck: Deck) -> some View {
