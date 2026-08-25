@@ -4,7 +4,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Sendable {
+public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, CardNexusInventoryLocationManaging, Sendable {
     public static let productionBaseURL = URL(string: "https://public-api.cardnexus.com/v1")!
     private let baseURL: URL
     private let transport: any HTTPTransport
@@ -67,6 +67,29 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Se
         return try await decoded(InventoryLocationDTO.self, from: urlRequest).model
     }
 
+    public func updateInventoryLocation(_ request: InventoryLocationUpdateRequest) async throws -> InventoryLocation {
+        let currentName = request.currentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentName.isEmpty, !name.isEmpty else { throw InventoryLocationUpsertValidationError.emptyName }
+        guard name.count <= 100 else { throw InventoryLocationUpsertValidationError.nameTooLong }
+        let dto = InventoryLocationUpdateDTO(name: name, color: request.color, icon: request.icon)
+        var urlRequest = try authenticatedLocationRequest(name: currentName)
+        urlRequest.httpMethod = "PATCH"
+        urlRequest.httpBody = try JSONEncoder().encode(dto)
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return try await decoded(InventoryLocationDTO.self, from: urlRequest).model
+    }
+
+    public func deleteInventoryLocation(named name: String) async throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw InventoryLocationUpsertValidationError.emptyName }
+        var request = try authenticatedLocationRequest(name: trimmed)
+        request.httpMethod = "DELETE"
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try await decoded(InventoryLocationDeleteResponseDTO.self, from: request)
+    }
+
     public func bulkMoveInventoryLines(_ request: InventoryBulkMoveRequest) async throws -> InventoryBulkMoveResponse {
         guard !request.idempotencyKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw InventoryBulkMoveValidationError.emptyIdempotencyKey
@@ -97,8 +120,24 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Se
     }
 
     private func authenticatedRequest(path: String, queryItems: [URLQueryItem] = []) throws -> URLRequest {
+        try authenticatedRequest(url: baseURL.appending(path: path), queryItems: queryItems)
+    }
+
+    private func authenticatedLocationRequest(name: String) throws -> URLRequest {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/%")
+        guard let encodedName = name.addingPercentEncoding(withAllowedCharacters: allowed),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { throw CardNexusClientError.invalidURL }
+        let basePath = components.percentEncodedPath.hasSuffix("/") ? components.percentEncodedPath : components.percentEncodedPath + "/"
+        components.percentEncodedPath = basePath + "inventory/locations/" + encodedName
+        guard let url = components.url else { throw CardNexusClientError.invalidURL }
+        return try authenticatedRequest(url: url)
+    }
+
+    private func authenticatedRequest(url: URL, queryItems: [URLQueryItem] = []) throws -> URLRequest {
         guard let apiKey = try credentialStore.loadAPIKey(), !apiKey.isEmpty else { throw CardNexusClientError.missingCredential }
-        guard var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false) else { throw CardNexusClientError.invalidURL }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw CardNexusClientError.invalidURL }
         if !queryItems.isEmpty { components.queryItems = queryItems }
         guard let url = components.url else { throw CardNexusClientError.invalidURL }
         var request = URLRequest(url: url)
