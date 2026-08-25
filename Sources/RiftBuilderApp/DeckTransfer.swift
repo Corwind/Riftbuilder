@@ -107,7 +107,7 @@ extension UTType {
 }
 
 struct RiftDeckFileDocument: FileDocument {
-    static let readableContentTypes: [UTType] = [.riftDeck, .json]
+    static let readableContentTypes: [UTType] = [.riftDeck, .json, .plainText]
     let data: Data
 
     init(data: Data) {
@@ -131,6 +131,7 @@ final class DeckTransferModel {
     var isExporterPresented = false
     var exportDocument: RiftDeckFileDocument?
     var exportFilename = "Deck"
+    var exportContentType: UTType = .riftDeck
     var isWorking = false
 
     private let service: any DeckTransferServicing
@@ -169,6 +170,19 @@ final class DeckTransferModel {
     }
 
     func prepareExport(deckID: UUID?, appModel: AppModel) async {
+        await prepareExport(deckID: deckID, format: .riftBuilderDocument, appModel: appModel)
+    }
+
+    func prepareRiftDeckTextExport(deckID: UUID?, appModel: AppModel) async {
+        await prepareExport(deckID: deckID, format: .riftDeckText, appModel: appModel)
+    }
+
+    private enum ExportFormat {
+        case riftBuilderDocument
+        case riftDeckText
+    }
+
+    private func prepareExport(deckID: UUID?, format: ExportFormat, appModel: AppModel) async {
         guard let deckID else {
             appModel.notice = AppDeckTransferError.noSelectedDeck.localizedDescription
             return
@@ -177,8 +191,16 @@ final class DeckTransferModel {
         defer { isWorking = false }
         do {
             let payload = try await service.exportDeckDocument(id: deckID)
-            exportDocument = RiftDeckFileDocument(data: payload.data)
-            exportFilename = payload.suggestedFilename + ".riftdeck"
+            switch format {
+            case .riftBuilderDocument:
+                exportDocument = RiftDeckFileDocument(data: payload.data)
+                exportFilename = payload.suggestedFilename + ".riftdeck"
+                exportContentType = .riftDeck
+            case .riftDeckText:
+                exportDocument = RiftDeckFileDocument(data: Data(payload.plainText.utf8))
+                exportFilename = payload.suggestedFilename + ".txt"
+                exportContentType = .plainText
+            }
             isExporterPresented = true
         } catch {
             appModel.notice = "Deck export failed: \(error.localizedDescription)"
@@ -198,7 +220,7 @@ final class DeckTransferModel {
             guard NSPasteboard.general.setString(payload.plainText, forType: .string) else {
                 throw AppServiceError.unavailable("macOS could not write the deck list to the clipboard.")
             }
-            appModel.notice = "Copied the deck list to the clipboard."
+            appModel.notice = "Copied the RiftDeck-compatible deck list to the clipboard."
         } catch {
             appModel.notice = "Clipboard export failed: \(error.localizedDescription)"
         }

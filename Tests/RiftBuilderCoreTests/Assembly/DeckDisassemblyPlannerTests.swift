@@ -108,6 +108,38 @@ final class DeckDisassemblyPlannerTests: XCTestCase {
             XCTAssertEqual(error as? DisassemblyPlanningError, .destinationIsNotStorage("Trade"))
         }
     }
+
+    func testDisassemblyNeverIgnoresDeckInventoryMissingFromTheCatalogue() throws {
+        let deckID = UUID()
+        let inventory = AssemblyInventorySnapshot(
+            lines: [disassemblyLine("unknown", productID: 404, quantity: 2, location: "Deck")],
+            printingsByProductID: [:],
+            locationPolicies: [
+                LocationPolicy(normalizedName: "deck", displayName: "Deck", kind: .deck, countsAsAvailable: false, linkedDeckID: deckID),
+                LocationPolicy(normalizedName: "box", displayName: "Box", kind: .storage, countsAsAvailable: true),
+            ]
+        )
+
+        let unresolved = try DeckDisassemblyPlanner().makePlan(DisassemblyPlanRequest(
+            deckID: deckID,
+            inventory: inventory,
+            sourceDeckLocationName: "Deck"
+        ))
+        XCTAssertFalse(unresolved.canApply)
+        XCTAssertEqual(unresolved.returnRoutes.first?.key.requirement.nameSlug, "unknown-product-404")
+        XCTAssertEqual(unresolved.returnRoutes.first?.quantity, 2)
+
+        let resolved = try DeckDisassemblyPlanner().makePlan(DisassemblyPlanRequest(
+            deckID: deckID,
+            inventory: inventory,
+            sourceDeckLocationName: "Deck",
+            destinationStorageLocationName: "Box"
+        ))
+        XCTAssertTrue(resolved.canApply)
+        XCTAssertEqual(resolved.movements.first?.inventoryID, "unknown")
+        XCTAssertEqual(resolved.movements.first?.quantity, 2)
+        XCTAssertEqual(resolved.movements.first?.destinationLocationName, "Box")
+    }
 }
 
 private func disassemblyLine(_ id: String, productID: Int64, quantity: Int, location: String) -> InventoryLine {

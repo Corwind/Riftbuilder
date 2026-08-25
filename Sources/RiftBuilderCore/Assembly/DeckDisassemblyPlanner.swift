@@ -101,18 +101,18 @@ public struct DeckDisassemblyPlanner: Sendable {
         var routes: [DeckReturnRouteKey: RouteAllocation] = [:]
         var allocations: [MovementKey: Int] = [:]
         let lines = request.inventory.lines.filter {
-            $0.quantity > 0 && InventoryLocation.normalize($0.locationName) == sourceKey && request.inventory.printingsByProductID[$0.productID] != nil
+            $0.quantity > 0 && InventoryLocation.normalize($0.locationName) == sourceKey
         }.sorted(by: Self.lineLessThan)
 
         for line in lines {
-            guard let printing = request.inventory.printingsByProductID[line.productID] else { continue }
+            let nameSlug = request.inventory.printingsByProductID[line.productID]?.nameSlug ?? "unknown-product-\(line.productID)"
             let requirement = DeckPhysicalRequirementKey(
-                nameSlug: printing.nameSlug,
+                nameSlug: nameSlug,
                 preference: PrintingPreference(productID: line.productID, finish: line.finish, language: line.language)
             )
             var remaining = line.quantity
             let matchingOrigins = origins.indices.filter {
-                origins[$0].remaining > 0 && Self.origin(origins[$0].lot, matches: line, nameSlug: printing.nameSlug)
+                origins[$0].remaining > 0 && Self.origin(origins[$0].lot, matches: line, nameSlug: nameSlug)
             }.sorted { Self.originLessThan(origins[$0].lot, origins[$1].lot) }
             for originIndex in matchingOrigins where remaining > 0 {
                 let quantity = min(remaining, origins[originIndex].remaining)
@@ -130,7 +130,7 @@ public struct DeckDisassemblyPlanner: Sendable {
                 )
                 addRoute(route, quantity: quantity, previousLocationName: remembered.previousLocationName, destination: destination, to: &routes)
                 if let destination {
-                    allocations[MovementKey(line: line, nameSlug: printing.nameSlug, destination: destination, originLotID: remembered.id), default: 0] += quantity
+                    allocations[MovementKey(line: line, nameSlug: nameSlug, destination: destination, originLotID: remembered.id), default: 0] += quantity
                 }
             }
             if remaining > 0 {
@@ -138,7 +138,7 @@ public struct DeckDisassemblyPlanner: Sendable {
                 let destination = try destination(for: route, origin: nil, fallback: fallbackDestination, overrides: overrides, policies: policies, sourceKey: sourceKey)
                 addRoute(route, quantity: remaining, previousLocationName: nil, destination: destination, to: &routes)
                 if let destination {
-                    allocations[MovementKey(line: line, nameSlug: printing.nameSlug, destination: destination, originLotID: nil), default: 0] += remaining
+                    allocations[MovementKey(line: line, nameSlug: nameSlug, destination: destination, originLotID: nil), default: 0] += remaining
                 }
             }
         }
