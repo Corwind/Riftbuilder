@@ -304,20 +304,6 @@ final class AppModel {
         }
     }
 
-    func updateLocation(_ original: LocationPolicy, kind: LocationKind, linkedDeckID: UUID? = nil) async {
-        var policy = original
-        policy.kind = kind
-        policy.countsAsAvailable = kind == .storage
-        policy.linkedDeckID = kind == .deck ? linkedDeckID : nil
-        do {
-            try await service.saveLocationPolicy(policy)
-            await loadLocations()
-            await loadInventory()
-        } catch {
-            notice = error.localizedDescription
-        }
-    }
-
     func requestNewDeckNaming() {
         deckNamingRequest = DeckNamingRequest(purpose: .create, initialName: "")
         destination = .decks
