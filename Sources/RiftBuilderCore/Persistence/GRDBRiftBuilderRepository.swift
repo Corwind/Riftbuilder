@@ -4,6 +4,10 @@ import GRDB
 public enum LocationPolicyPersistenceError: Error, Hashable, Sendable {
     case linkedDeckRequiresDeckClassification
     case deckAlreadyLinked(deckID: UUID, locationName: String)
+    case unlocatedCannotBeManaged
+    case locationNotFound(String)
+    case locationNameConflict(String)
+    case locationNotEmpty(name: String, cardCount: Int)
 }
 
 extension LocationPolicyPersistenceError: LocalizedError {
@@ -13,6 +17,14 @@ extension LocationPolicyPersistenceError: LocalizedError {
             return "Only a location classified as Deck can be linked to a deck."
         case let .deckAlreadyLinked(_, locationName):
             return "This deck is already linked to the location '\(locationName)'. Unlink it there before choosing another location."
+        case .unlocatedCannotBeManaged:
+            return "Unlocated cards are not a CardNexus location and cannot be edited or deleted."
+        case let .locationNotFound(name):
+            return "The location '\(name)' is no longer available. Refresh locations and try again."
+        case let .locationNameConflict(name):
+            return "A location named '\(name)' already exists."
+        case let .locationNotEmpty(name, cardCount):
+            return "The location '\(name)' still contains \(cardCount) card\(cardCount == 1 ? "" : "s"). Move them elsewhere before deleting it."
         }
     }
 }
@@ -391,6 +403,117 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                     policy.countsAsAvailable,
                     policy.linkedDeckID?.uuidString,
                 ])
+        }
+    }
+
+    public func replaceLocationPolicy(currentNormalizedName: String, with location: InventoryLocation, kind: LocationKind, linkedDeckID: UUID?) async throws -> LocationPolicy {
+        let currentKey = InventoryLocation.normalize(currentNormalizedName)
+        let newKey = location.normalizedName
+        guard currentKey != "__unlocated__", newKey != "__unlocated__" else {
+            throw LocationPolicyPersistenceError.unlocatedCannotBeManaged
+        }
+        guard kind == .deck || linkedDeckID == nil else {
+            throw LocationPolicyPersistenceError.linkedDeckRequiresDeckClassification
+        }
+
+        let policy = LocationPolicy(
+            normalizedName: newKey,
+            displayName: location.name,
+            color: location.color,
+            icon: location.icon,
+            kind: kind,
+            countsAsAvailable: kind == .storage,
+            linkedDeckID: kind == .deck ? linkedDeckID : nil
+        )
+
+        try await databaseWriter.write { db in
+            guard let current = try Row.fetchOne(db, sql: "SELECT last_seen_at FROM location_policy WHERE location_key = ?", arguments: [currentKey]) else {
+                throw LocationPolicyPersistenceError.locationNotFound(currentNormalizedName)
+            }
+            if newKey != currentKey,
+               try Row.fetchOne(db, sql: "SELECT 1 FROM location_policy WHERE location_key = ?", arguments: [newKey]) != nil
+            {
+                throw LocationPolicyPersistenceError.locationNameConflict(location.name)
+            }
+            if let linkedDeckID,
+               let existing = try Row.fetchOne(db, sql: """
+                   SELECT display_name FROM location_policy
+                   WHERE linked_deck_id = ? AND location_key <> ?
+                   LIMIT 1
+                   """, arguments: [linkedDeckID.uuidString, currentKey])
+            {
+                let locationName: String = existing["display_name"]
+                throw LocationPolicyPersistenceError.deckAlreadyLinked(deckID: linkedDeckID, locationName: locationName)
+            }
+
+            let lastSeenAt: String = (current["last_seen_at"] as String?) ?? PersistenceCoding.date(.now)
+            if newKey == currentKey {
+                try db.execute(sql: """
+                    UPDATE location_policy
+                    SET display_name = ?, color = ?, icon = ?, kind = ?, counts_as_available = ?, linked_deck_id = ?
+                    WHERE location_key = ?
+                    """, arguments: [
+                        policy.displayName, policy.color, policy.icon, policy.kind.rawValue,
+                        policy.countsAsAvailable, policy.linkedDeckID?.uuidString, currentKey,
+                    ])
+                try db.execute(sql: "UPDATE inventory_line SET location_display_name = ? WHERE location_key = ?", arguments: [policy.displayName, currentKey])
+                try db.execute(sql: "UPDATE deck_card_origin SET previous_location_name = ? WHERE previous_location_key = ?", arguments: [policy.displayName, currentKey])
+                try db.execute(sql: """
+                    INSERT INTO observed_location (location_key, display_name, color, icon, last_seen_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(location_key) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        color = excluded.color,
+                        icon = excluded.icon
+                    """, arguments: [currentKey, policy.displayName, policy.color, policy.icon, lastSeenAt])
+                return
+            }
+
+            // Release the unique deck link before creating its replacement row.
+            try db.execute(sql: "UPDATE location_policy SET linked_deck_id = NULL WHERE location_key = ?", arguments: [currentKey])
+            try db.execute(sql: """
+                INSERT INTO location_policy (
+                    location_key, display_name, color, icon, kind, counts_as_available, linked_deck_id, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    newKey, policy.displayName, policy.color, policy.icon, policy.kind.rawValue,
+                    policy.countsAsAvailable, policy.linkedDeckID?.uuidString, lastSeenAt,
+                ])
+            try db.execute(sql: """
+                INSERT INTO observed_location (location_key, display_name, color, icon, last_seen_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(location_key) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    color = excluded.color,
+                    icon = excluded.icon,
+                    last_seen_at = excluded.last_seen_at
+                """, arguments: [newKey, policy.displayName, policy.color, policy.icon, lastSeenAt])
+            try db.execute(sql: "UPDATE inventory_line SET location_key = ?, location_display_name = ? WHERE location_key = ?", arguments: [newKey, policy.displayName, currentKey])
+            try db.execute(sql: "UPDATE deck_card_origin SET previous_location_key = ?, previous_location_name = ? WHERE previous_location_key = ?", arguments: [newKey, policy.displayName, currentKey])
+            try db.execute(sql: "DELETE FROM observed_location WHERE location_key = ?", arguments: [currentKey])
+            try db.execute(sql: "DELETE FROM location_policy WHERE location_key = ?", arguments: [currentKey])
+        }
+        return policy
+    }
+
+    public func deleteEmptyLocationPolicy(normalizedName: String) async throws {
+        let key = InventoryLocation.normalize(normalizedName)
+        guard key != "__unlocated__" else { throw LocationPolicyPersistenceError.unlocatedCannotBeManaged }
+        try await databaseWriter.write { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT display_name FROM location_policy WHERE location_key = ?", arguments: [key]) else {
+                throw LocationPolicyPersistenceError.locationNotFound(normalizedName)
+            }
+            let displayName: String = row["display_name"]
+            let cardCount = try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(quantity), 0) FROM inventory_line WHERE location_key = ?", arguments: [key]) ?? 0
+            guard cardCount == 0 else {
+                throw LocationPolicyPersistenceError.locationNotEmpty(name: displayName, cardCount: cardCount)
+            }
+            let lineCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM inventory_line WHERE location_key = ?", arguments: [key]) ?? 0
+            guard lineCount == 0 else {
+                throw LocationPolicyPersistenceError.locationNotEmpty(name: displayName, cardCount: cardCount)
+            }
+            try db.execute(sql: "DELETE FROM observed_location WHERE location_key = ?", arguments: [key])
+            try db.execute(sql: "DELETE FROM location_policy WHERE location_key = ?", arguments: [key])
         }
     }
 
