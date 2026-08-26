@@ -349,7 +349,7 @@ private func printing(_ productID: Int64, slug: String) -> CardPrinting {
         attributes: [
             "cardType": .string("Unit"),
             "domains": .array([.string("calm")]),
-            "tags": .array([.string("Ahri")]),
+            "cardTags": .array([.string("Ahri")]),
         ]
     )
 }
