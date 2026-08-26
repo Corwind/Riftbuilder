@@ -59,9 +59,13 @@ actor LiveAppDataService: AppDataServicing {
         try credentialStore.deleteAPIKey()
     }
 
-    func synchronize() async throws -> Date {
+    func synchronize(forceCatalogueSync: Bool) async throws -> Date {
         let metadata = try await cardNexus.fetchCatalogueMetadata(game: "riftbound")
-        if try await repository.catalogueChecksum() != metadata.checksum {
+        var shouldImportCatalogue = forceCatalogueSync
+        if !shouldImportCatalogue {
+            shouldImportCatalogue = try await repository.catalogueChecksum() != metadata.checksum
+        }
+        if shouldImportCatalogue {
             let stream = try await cardNexus.downloadCatalogue(from: metadata.url)
             var printings: [CardPrinting] = []
             printings.reserveCapacity(metadata.recordCount)
@@ -180,7 +184,7 @@ actor UnavailableAppDataService: AppDataServicing {
     func hasStoredCredential() async throws -> Bool { throw failure }
     func storeAndVerifyCredential(_ apiKey: String) async throws { throw failure }
     func deleteCredential() async throws { throw failure }
-    func synchronize() async throws -> Date { throw failure }
+    func synchronize(forceCatalogueSync: Bool) async throws -> Date { throw failure }
     func lastSuccessfulSync() async -> Date? { nil }
     func inventoryCards(search: String?, targetDeckID: UUID?) async throws -> [AppInventoryCard] { throw failure }
     func locationPolicies() async throws -> [LocationPolicy] { throw failure }

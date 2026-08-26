@@ -53,14 +53,20 @@ struct SettingsView: View {
                         }
                     }
                     Divider()
-                    Button {
-                        Task { await model.synchronize() }
-                    } label: {
-                        Label(model.syncState.isSyncing ? "Synchronizing…" : "Synchronize Now", systemImage: "arrow.triangle.2.circlepath")
-                            .foregroundStyle(.white)
+                    HStack(spacing: 16) {
+                        Button {
+                            Task { await model.synchronize() }
+                        } label: {
+                            Label(model.syncState.isSyncing ? "Synchronizing…" : "Synchronize Now", systemImage: "arrow.triangle.2.circlepath")
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.syncState.isSyncing || model.credentialState != .stored)
+
+                        Toggle("Force catalogue sync", isOn: $model.forceCatalogueSync)
+                            .toggleStyle(.switch)
+                            .help("Download and re-import the catalogue even when its checksum has not changed")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.syncState.isSyncing || model.credentialState != .stored)
                 }
 
                 settingsCard("Local data") {
