@@ -5,7 +5,7 @@ protocol AppDataServicing: Sendable {
     func hasStoredCredential() async throws -> Bool
     func storeAndVerifyCredential(_ apiKey: String) async throws
     func deleteCredential() async throws
-    func synchronize() async throws -> Date
+    func synchronize(forceCatalogueSync: Bool) async throws -> Date
     func lastSuccessfulSync() async -> Date?
     func inventoryCards(search: String?, targetDeckID: UUID?) async throws -> [AppInventoryCard]
     func locationPolicies() async throws -> [LocationPolicy]
@@ -23,6 +23,12 @@ protocol AppDataServicing: Sendable {
     func saveDeckEntry(_ entry: DeckEntry) async throws
     func deleteDeckEntry(id: UUID) async throws
     func validationIssues(for snapshot: DeckSnapshot) async -> [DeckValidationIssue]
+}
+
+extension AppDataServicing {
+    func synchronize() async throws -> Date {
+        try await synchronize(forceCatalogueSync: false)
+    }
 }
 
 actor DemoAppDataService: AppDataServicing {
@@ -118,7 +124,7 @@ actor DemoAppDataService: AppDataServicing {
 
     func deleteCredential() async throws { credentialStored = false }
 
-    func synchronize() async throws -> Date {
+    func synchronize(forceCatalogueSync: Bool) async throws -> Date {
         guard credentialStored else { throw AppServiceError.invalidCredential }
         try await Task.sleep(for: .milliseconds(500))
         let date = Date()

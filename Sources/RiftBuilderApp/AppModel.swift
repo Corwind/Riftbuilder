@@ -7,6 +7,7 @@ import RiftBuilderCore
 final class AppModel {
     private static let alwaysAvailableRunesKey = "riftbuilder.deckInventory.alwaysAvailableRunes"
     private static let alwaysAvailableBattlefieldsKey = "riftbuilder.deckInventory.alwaysAvailableBattlefields"
+    private static let forceCatalogueSyncKey = "riftbuilder.synchronization.forceCatalogueSync"
 
     var destination: AppDestination? = .inventory
     var inventoryPresentation: InventoryPresentation = .grid
@@ -46,6 +47,9 @@ final class AppModel {
     var alwaysAvailableBattlefields: Bool {
         didSet { defaults.set(alwaysAvailableBattlefields, forKey: Self.alwaysAvailableBattlefieldsKey) }
     }
+    var forceCatalogueSync: Bool {
+        didSet { defaults.set(forceCatalogueSync, forKey: Self.forceCatalogueSyncKey) }
+    }
 
     let service: any AppDataServicing
     @ObservationIgnored private let defaults: UserDefaults
@@ -56,6 +60,7 @@ final class AppModel {
         self.defaults = defaults
         alwaysAvailableRunes = defaults.object(forKey: Self.alwaysAvailableRunesKey) as? Bool ?? true
         alwaysAvailableBattlefields = defaults.object(forKey: Self.alwaysAvailableBattlefieldsKey) as? Bool ?? true
+        forceCatalogueSync = defaults.object(forKey: Self.forceCatalogueSyncKey) as? Bool ?? false
     }
 
     var deckInventoryAvailability: DeckInventoryAvailability {
@@ -312,7 +317,7 @@ final class AppModel {
         syncState = .syncing(progress: 0.15, message: "Connecting to CardNexus…")
         do {
             syncState = .syncing(progress: 0.55, message: "Refreshing catalogue and inventory…")
-            let completedAt = try await service.synchronize()
+            let completedAt = try await service.synchronize(forceCatalogueSync: forceCatalogueSync)
             syncState = .syncing(progress: 0.9, message: "Updating local views…")
             await reloadAll(forceCatalogueReload: true)
             lastSuccessfulSync = completedAt
