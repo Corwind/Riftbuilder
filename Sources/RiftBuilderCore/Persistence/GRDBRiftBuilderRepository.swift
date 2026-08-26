@@ -691,6 +691,9 @@ extension GRDBRiftBuilderRepository {
 
         return identitiesByNameSlug.keys.sorted().compactMap { nameSlug in
             guard let identity = identitiesByNameSlug[nameSlug] else { return nil }
+            let tags = stableUnique(tagsByNameSlug[nameSlug] ?? [])
+            var attributes = identity.attributes
+            attributes["cardTags"] = .array(tags.map(JSONValue.string))
             return CardIdentity(
                 nameSlug: identity.nameSlug,
                 gameID: identity.gameID,
@@ -698,16 +701,17 @@ extension GRDBRiftBuilderRepository {
                 cardType: identity.cardType,
                 superType: identity.superType,
                 domains: identity.domains,
-                tags: stableUnique(tagsByNameSlug[nameSlug] ?? []),
+                tags: tags,
                 energyCost: identity.energyCost,
                 mightCost: identity.mightCost,
-                attributes: identity.attributes
+                attributes: attributes
             )
         }
     }
 
     static func identity(from printing: CardPrinting) -> CardIdentity {
         let attributes = printing.attributes
+        let tags = attributes.strings(for: ["cardTags"])
         return CardIdentity(
             nameSlug: printing.nameSlug,
             gameID: attributes.string(for: ["gameId", "gameID", "game_id"]) ?? "riftbound",
@@ -715,7 +719,7 @@ extension GRDBRiftBuilderRepository {
             cardType: attributes.string(for: ["cardType", "card_type", "type"]),
             superType: attributes.string(for: ["superType", "super_type"]),
             domains: attributes.strings(for: ["domains", "domain"]),
-            tags: attributes.strings(for: ["tags"]),
+            tags: tags,
             energyCost: attributes.integer(for: ["energyCost", "energy_cost", "energy"]),
             mightCost: attributes.integer(for: ["mightCost", "might_cost", "might"]),
             attributes: attributes

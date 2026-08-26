@@ -61,6 +61,32 @@ final class CatalogueSummaryTests: XCTestCase {
         let summaries = try await repository.catalogueCards(search: nil)
         let summary = try XCTUnwrap(summaries.first)
         XCTAssertEqual(summary.identity.tags, ["Ahri", "Champion", "Ionia"])
+        XCTAssertEqual(summary.identity.attributes.strings(for: ["cardTags"]), ["Ahri", "Champion", "Ionia"])
+    }
+
+    func testReprocessingMergesLegendNameTagIntoTheIdentityDefinition() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        try await repository.replaceCatalogue(
+            printings: [
+                cataloguePrinting(productID: 248_180, nameSlug: "viktor-herald-of-the-arcane", displayName: "Viktor - Herald of the Arcane"),
+            ],
+            checksum: "before-merge-fix",
+            completedAt: .distantPast
+        )
+
+        try await repository.replaceCatalogue(
+            printings: [
+                cataloguePrinting(productID: 151_415, nameSlug: "viktor-herald-of-the-arcane", displayName: "Viktor - Herald of the Arcane", tags: ["Viktor"]),
+                cataloguePrinting(productID: 248_180, nameSlug: "viktor-herald-of-the-arcane", displayName: "Viktor - Herald of the Arcane"),
+            ],
+            checksum: "after-merge-fix",
+            completedAt: .now
+        )
+
+        let summaries = try await repository.catalogueCards(search: "Viktor")
+        let identity = try XCTUnwrap(summaries.first?.identity)
+        XCTAssertEqual(identity.tags, ["Viktor"])
+        XCTAssertEqual(identity.attributes.strings(for: ["cardTags"]), ["Viktor"])
     }
 
     func testPreferredPrintingFallsBackToLowestProductIDWhenNoImageExists() async throws {
@@ -117,6 +143,8 @@ private func cataloguePrinting(
         expansionSlug: expansion,
         rarity: rarity,
         imageURL: image.flatMap(URL.init(string:)),
-        attributes: ["tags": .array(tags.map { .string($0) })]
+        attributes: tags.isEmpty
+            ? [:]
+            : ["cardTags": .array(tags.map(JSONValue.string))]
     )
 }
