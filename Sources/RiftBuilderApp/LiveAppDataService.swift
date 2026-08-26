@@ -14,14 +14,15 @@ actor LiveAppDataService: AppDataServicing {
 
     init(
         credentialStore: any CredentialStoring = KeychainCredentialStore(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        debugLogger: (any CardNexusHTTPDebugLogging)? = nil
     ) throws {
         let applicationSupport = try Self.applicationSupportDirectory()
         let databasePath = applicationSupport.appending(path: "riftbuilder.sqlite").path
         let repository = try GRDBRiftBuilderRepository(path: databasePath)
         let sessionCredentialStore = SessionCredentialStore(backingStore: credentialStore)
 
-        let cardNexus = CardNexusClient(credentialStore: sessionCredentialStore)
+        let cardNexus = CardNexusClient(credentialStore: sessionCredentialStore, debugLogger: debugLogger)
         let assemblyStore = try GRDBAssemblyStore(path: databasePath)
         self.credentialStore = sessionCredentialStore
         self.cardNexus = cardNexus

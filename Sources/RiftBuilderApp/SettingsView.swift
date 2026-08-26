@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: AppModel
+    @Bindable var debugLog: DebugLogModel
     @State private var apiKey = ""
     @State private var showingReplaceField = false
     @State private var showingDeleteConfirmation = false
@@ -26,6 +27,13 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                     Divider()
                     Text("Turn either option off to use CardNexus inventory and locations normally for that card type. These settings affect availability and physical movement only; deck-building rules are unchanged.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                settingsCard("Debugging") {
+                    Toggle("Enable CardNexus HTTP debug mode", isOn: $debugLog.isEnabled)
+                    Text("When enabled, a Debug view appears in the sidebar and records CardNexus request paths, queries, payloads, and responses. Authorization headers are never recorded, and credential-like fields are redacted. Logs stay in memory only and are cleared when debug mode is disabled or the app quits.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

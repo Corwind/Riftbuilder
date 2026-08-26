@@ -12,14 +12,16 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
     private let retryPolicy: CardNexusRetryPolicy
     private let sleep: CardNexusSleep
     private let catalogueDecoder: any CatalogueFeedDecoding
+    private let debugLogger: (any CardNexusHTTPDebugLogging)?
 
-    public init(baseURL: URL = CardNexusClient.productionBaseURL, transport: any HTTPTransport = URLSessionTransport(), credentialStore: any CredentialStoring, retryPolicy: CardNexusRetryPolicy = .default, sleep: @escaping CardNexusSleep = CardNexusSleeps.continuousClock, catalogueDecoder: any CatalogueFeedDecoding = AppleGzipCatalogueDecoder()) {
+    public init(baseURL: URL = CardNexusClient.productionBaseURL, transport: any HTTPTransport = URLSessionTransport(), credentialStore: any CredentialStoring, retryPolicy: CardNexusRetryPolicy = .default, sleep: @escaping CardNexusSleep = CardNexusSleeps.continuousClock, catalogueDecoder: any CatalogueFeedDecoding = AppleGzipCatalogueDecoder(), debugLogger: (any CardNexusHTTPDebugLogging)? = nil) {
         self.baseURL = baseURL
         self.transport = transport
         self.credentialStore = credentialStore
         self.retryPolicy = retryPolicy
         self.sleep = sleep
         self.catalogueDecoder = catalogueDecoder
+        self.debugLogger = debugLogger
     }
 
     public func verifyCredential() async throws { _ = try await fetchLocations() }
@@ -158,7 +160,24 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
         while true {
             try Task.checkCancellation()
             do {
-                let (data, response) = try await transport.execute(request)
+                let debugID = UUID()
+                let shouldLog = await debugLogger?.isLoggingEnabled() == true
+                if shouldLog {
+                    await debugLogger?.record(.request(CardNexusHTTPDebugSanitizer.request(request, id: debugID, attempt: attempt)))
+                }
+                let data: Data
+                let response: HTTPURLResponse
+                do {
+                    (data, response) = try await transport.execute(request)
+                } catch {
+                    if shouldLog {
+                        await debugLogger?.record(.response(CardNexusHTTPDebugSanitizer.failure(error, for: request, id: debugID, attempt: attempt)))
+                    }
+                    throw error
+                }
+                if shouldLog {
+                    await debugLogger?.record(.response(CardNexusHTTPDebugSanitizer.response(data: data, response: response, for: request, id: debugID, attempt: attempt)))
+                }
                 if (200 ..< 300).contains(response.statusCode) { return (data, response) }
                 let transient = response.statusCode == 429 || (500 ... 599).contains(response.statusCode)
                 if attempt < retryPolicy.maximumAttempts, transient {

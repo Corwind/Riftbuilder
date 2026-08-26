@@ -2,6 +2,12 @@
 
 All notable changes to RiftBuilder are recorded in this file. RiftBuilder follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-08-26
+
+### Added
+
+- Added an opt-in CardNexus HTTP debug view with credential-safe request and response logging, highlighted search results, and previous and next match navigation.
+
 ## [0.2.1] - 2026-08-23
 
 ### Added
