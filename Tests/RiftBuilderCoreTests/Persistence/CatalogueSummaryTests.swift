@@ -46,6 +46,23 @@ final class CatalogueSummaryTests: XCTestCase {
         XCTAssertEqual(summary.rarities, ["Common", "Rare"])
     }
 
+    func testMultiplePrintingsMergeTheirIdentityTags() async throws {
+        let repository = try GRDBRiftBuilderRepository.inMemory()
+        try await repository.replaceCatalogue(
+            printings: [
+                cataloguePrinting(productID: 1, nameSlug: "ahri", displayName: "Ahri", tags: ["Champion", "Ahri"]),
+                cataloguePrinting(productID: 2, nameSlug: "ahri", displayName: "Ahri", tags: ["Ionia"]),
+                cataloguePrinting(productID: 3, nameSlug: "ahri", displayName: "Ahri"),
+            ],
+            checksum: "fixture",
+            completedAt: .now
+        )
+
+        let summaries = try await repository.catalogueCards(search: nil)
+        let summary = try XCTUnwrap(summaries.first)
+        XCTAssertEqual(summary.identity.tags, ["Ahri", "Champion", "Ionia"])
+    }
+
     func testPreferredPrintingFallsBackToLowestProductIDWhenNoImageExists() async throws {
         let repository = try GRDBRiftBuilderRepository.inMemory()
         try await repository.replaceCatalogue(
@@ -89,7 +106,8 @@ private func cataloguePrinting(
     displayName: String,
     expansion: String? = nil,
     rarity: String? = nil,
-    image: String? = nil
+    image: String? = nil,
+    tags: [String] = []
 ) -> CardPrinting {
     CardPrinting(
         productID: productID,
@@ -98,6 +116,7 @@ private func cataloguePrinting(
         displayName: displayName,
         expansionSlug: expansion,
         rarity: rarity,
-        imageURL: image.flatMap(URL.init(string:))
+        imageURL: image.flatMap(URL.init(string:)),
+        attributes: ["tags": .array(tags.map { .string($0) })]
     )
 }

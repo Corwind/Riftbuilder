@@ -50,13 +50,15 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
     }
 
     public func replaceCatalogue(printings: [CardPrinting], checksum: String, completedAt: Date) async throws {
+        let identities = Self.mergedIdentities(from: printings)
         try await databaseWriter.write { db in
             try db.execute(sql: "CREATE TEMP TABLE IF NOT EXISTS incoming_product_ids (product_id INTEGER PRIMARY KEY)")
             try db.execute(sql: "DELETE FROM incoming_product_ids")
 
-            for printing in printings {
-                let identity = Self.identity(from: printing)
+            for identity in identities {
                 try Self.upsert(identity: identity, in: db)
+            }
+            for printing in printings {
                 try Self.upsert(printing: printing, in: db)
                 try db.execute(sql: "INSERT INTO incoming_product_ids (product_id) VALUES (?)", arguments: [printing.productID])
             }
@@ -677,6 +679,33 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
 }
 
 extension GRDBRiftBuilderRepository {
+    static func mergedIdentities(from printings: [CardPrinting]) -> [CardIdentity] {
+        var identitiesByNameSlug: [String: CardIdentity] = [:]
+        var tagsByNameSlug: [String: [String]] = [:]
+
+        for printing in printings {
+            let identity = Self.identity(from: printing)
+            identitiesByNameSlug[identity.nameSlug] = identity
+            tagsByNameSlug[identity.nameSlug, default: []].append(contentsOf: identity.tags)
+        }
+
+        return identitiesByNameSlug.keys.sorted().compactMap { nameSlug in
+            guard let identity = identitiesByNameSlug[nameSlug] else { return nil }
+            return CardIdentity(
+                nameSlug: identity.nameSlug,
+                gameID: identity.gameID,
+                displayName: identity.displayName,
+                cardType: identity.cardType,
+                superType: identity.superType,
+                domains: identity.domains,
+                tags: stableUnique(tagsByNameSlug[nameSlug] ?? []),
+                energyCost: identity.energyCost,
+                mightCost: identity.mightCost,
+                attributes: identity.attributes
+            )
+        }
+    }
+
     static func identity(from printing: CardPrinting) -> CardIdentity {
         let attributes = printing.attributes
         return CardIdentity(

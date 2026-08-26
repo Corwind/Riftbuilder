@@ -82,6 +82,7 @@ struct CatalogueCardPickerView: View {
             Divider()
             content
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .searchable(text: $model.pickerSearch, prompt: "Search the card catalogue")
         .task { await model.loadCatalogue() }
         .cardDetailSheet(item: $presentedCard)
