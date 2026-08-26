@@ -9,11 +9,13 @@ struct RiftBuilderApp: App {
     @State private var physicalAssembly: PhysicalAssemblyModel
     @State private var deckSave: DeckSaveWorkflowModel
     @State private var theme: AppTheme
+    @State private var debugLog: DebugLogModel
 
     init() {
+        let debugLog = DebugLogModel()
         let service: any TextDeckImportServicing & PhysicalAssemblyServicing & DeckSaveServicing
         do {
-            service = try LiveAppDataService()
+            service = try LiveAppDataService(debugLogger: debugLog)
         } catch {
             service = UnavailableAppDataService(error: error)
         }
@@ -23,11 +25,12 @@ struct RiftBuilderApp: App {
         _physicalAssembly = State(initialValue: PhysicalAssemblyModel(service: service))
         _deckSave = State(initialValue: DeckSaveWorkflowModel(service: service))
         _theme = State(initialValue: AppTheme())
+        _debugLog = State(initialValue: debugLog)
     }
 
     var body: some Scene {
         WindowGroup {
-            AppShellView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly)
+            AppShellView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly, debugLog: debugLog)
                 .modifier(TextDeckImportHost(workflow: textDeckImport, appModel: model))
                 .modifier(PhysicalAssemblyHost(workflow: physicalAssembly, appModel: model))
                 .modifier(DeckSaveWorkflowHost(workflow: deckSave, appModel: model))

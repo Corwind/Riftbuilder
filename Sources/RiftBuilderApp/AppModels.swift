@@ -6,6 +6,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
     case catalogue
     case decks
     case locations
+    case debug
     case settings
 
     var id: Self { self }
@@ -16,6 +17,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .catalogue: "Catalogue"
         case .decks: "Decks"
         case .locations: "Locations"
+        case .debug: "Debug"
         case .settings: "Settings"
         }
     }
@@ -26,6 +28,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .catalogue: "books.vertical"
         case .decks: "rectangle.stack"
         case .locations: "shippingbox"
+        case .debug: "ladybug"
         case .settings: "gearshape"
         }
     }

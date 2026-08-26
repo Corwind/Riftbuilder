@@ -4,6 +4,7 @@ struct AppShellView: View {
     @Bindable var model: AppModel
     @Bindable var deckTransfer: DeckTransferModel
     @Bindable var physicalAssembly: PhysicalAssemblyModel
+    @Bindable var debugLog: DebugLogModel
     @Environment(AppTheme.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
@@ -15,7 +16,7 @@ struct AppShellView: View {
 
                 List {
                     Section("Library") {
-                        ForEach(AppDestination.allCases) { destination in
+                        ForEach(visibleDestinations) { destination in
                             sidebarButton(for: destination)
                         }
                     }
@@ -99,6 +100,10 @@ struct AppShellView: View {
         )
     }
 
+    private var visibleDestinations: [AppDestination] {
+        AppDestination.allCases.filter { $0 != .debug || debugLog.isEnabled }
+    }
+
     private func sidebarButton(for destination: AppDestination) -> some View {
         let isSelected = model.destination == destination
 
@@ -130,7 +135,8 @@ struct AppShellView: View {
         case .catalogue: CatalogueView(model: model)
         case .decks: DecksView(model: model, deckTransfer: deckTransfer, physicalAssembly: physicalAssembly)
         case .locations: LocationsView(model: model)
-        case .settings: SettingsView(model: model)
+        case .debug: DebugView(debugLog: debugLog)
+        case .settings: SettingsView(model: model, debugLog: debugLog)
         }
     }
 }
