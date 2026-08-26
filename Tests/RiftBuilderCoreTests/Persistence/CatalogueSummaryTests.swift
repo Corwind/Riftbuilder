@@ -58,7 +58,8 @@ final class CatalogueSummaryTests: XCTestCase {
             completedAt: .now
         )
 
-        let summary = try XCTUnwrap(try await repository.catalogueCards(search: nil).first)
+        let summaries = try await repository.catalogueCards(search: nil)
+        let summary = try XCTUnwrap(summaries.first)
         XCTAssertEqual(summary.identity.tags, ["Ahri", "Champion", "Ionia"])
     }
 
