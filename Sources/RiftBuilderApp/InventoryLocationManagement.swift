@@ -115,7 +115,7 @@ extension LiveAppDataService {
         }
     }
 
-    private func refreshInventoryOnly() async throws -> [InventoryLine] {
+    func refreshInventoryOnly() async throws -> [InventoryLine] {
         async let linesTask = cardNexus.fetchAllInventoryLines(game: "riftbound")
         async let locationsTask = cardNexus.fetchLocations()
         let (lines, locations) = try await (linesTask, locationsTask)

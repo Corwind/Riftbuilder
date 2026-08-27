@@ -6,6 +6,7 @@ struct InventoryView: View {
     @FocusState private var searchFocused: Bool
     @State private var presentedCard: AppCardDetail?
     @State private var bulkMoveSelection: BulkMoveSelection?
+    @State private var isEditingInventory = false
 
     private let gridColumns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
 
@@ -16,7 +17,11 @@ struct InventoryView: View {
                     Task { await model.synchronize() }
                 }
             }
-            inventoryContent
+            if isEditingInventory {
+                InventoryEditModeView(model: model) { isEditingInventory = false }
+            } else {
+                inventoryContent
+            }
         }
         .navigationTitle("Inventory")
         .searchable(text: $model.inventorySearch, placement: .toolbar, prompt: "Names, descriptions, domains, types…")
@@ -24,7 +29,12 @@ struct InventoryView: View {
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                CollectionPresentationPicker(selection: $model.inventoryPresentation)
+                if isEditingInventory {
+                    Label("Edit Mode", systemImage: "pencil")
+                        .font(.headline)
+                } else {
+                    CollectionPresentationPicker(selection: $model.inventoryPresentation)
+                }
             }
             ToolbarItemGroup(placement: .secondaryAction) {
                 Picker("Inventory scope", selection: $model.inventoryScope) {
@@ -37,17 +47,27 @@ struct InventoryView: View {
 
                 inventoryDomainFilter
 
-                Button {
-                    bulkMoveSelection = BulkMoveSelection(
-                        cards: model.filteredInventory,
-                        initialSourceLocationKey: model.inventoryLocationFilter,
-                        filterSummary: bulkMoveFilterSummary
-                    )
-                } label: {
-                    Label("Move Results", systemImage: "shippingbox.and.arrow.backward")
+                if !isEditingInventory {
+                    Button {
+                        isEditingInventory = true
+                    } label: {
+                        Label("Edit Inventory", systemImage: "pencil")
+                    }
+                    .disabled(model.inventory.isEmpty || model.locations.isEmpty || model.credentialState != .stored || model.syncState.isSyncing)
+                    .help("Edit how each card total is allocated across locations")
+
+                    Button {
+                        bulkMoveSelection = BulkMoveSelection(
+                            cards: model.filteredInventory,
+                            initialSourceLocationKey: model.inventoryLocationFilter,
+                            filterSummary: bulkMoveFilterSummary
+                        )
+                    } label: {
+                        Label("Move Results", systemImage: "shippingbox.and.arrow.backward")
+                    }
+                    .disabled(model.filteredInventory.isEmpty || model.credentialState != .stored || model.syncState.isSyncing)
+                    .help("Move every physical copy matching the current inventory results")
                 }
-                .disabled(model.filteredInventory.isEmpty || model.credentialState != .stored || model.syncState.isSyncing)
-                .help("Move every physical copy matching the current inventory results")
             }
         }
         .cardDetailSheet(item: $presentedCard)
