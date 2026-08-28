@@ -7,6 +7,7 @@ struct AppPhysicalMovement: Identifiable, Hashable, Sendable {
     let movement: PlannedInventoryMovement
     let cardName: String
     let printingDescription: String
+    let domains: [String]
 
     var id: String { movement.id }
 }
@@ -35,6 +36,8 @@ struct AppPhysicalPlan: Identifiable, Sendable {
     let missingRequirements: [AppMissingRequirement]
     let returnRoutes: [DeckReturnRoute]
     let storageLocations: [LocationPolicy]
+    let cardNamesByNameSlug: [String: String]
+    let domainsByNameSlug: [String: [String]]
 
     var id: UUID {
         switch payload {
@@ -64,6 +67,7 @@ struct AppPhysicalExecutionOutcome: Sendable {
     let report: AssemblyExecutionReport
     let reconciledAt: Date?
     let reconciliationError: String?
+    let stateUpdateError: String?
 }
 
 enum AppPhysicalAssemblyError: LocalizedError {
@@ -166,10 +170,48 @@ extension LiveAppDataService {
                 try await repository.consumeDeckCardOrigins(deckID: disassembly.deckID, movements: succeededMovements)
             }
             try await assemblyStore.markAssemblyExecutionReconciled(planID: report.planID)
-            return AppPhysicalExecutionOutcome(report: report, reconciledAt: reconciledAt, reconciliationError: nil)
+            var stateUpdateError: String?
+            if report.isFullySuccessful {
+                do {
+                    try await updateDeckState(after: plan, at: reconciledAt)
+                } catch {
+                    stateUpdateError = error.localizedDescription
+                }
+            }
+            return AppPhysicalExecutionOutcome(
+                report: report,
+                reconciledAt: reconciledAt,
+                reconciliationError: nil,
+                stateUpdateError: stateUpdateError
+            )
         } catch {
-            return AppPhysicalExecutionOutcome(report: report, reconciledAt: nil, reconciliationError: error.localizedDescription)
+            return AppPhysicalExecutionOutcome(
+                report: report,
+                reconciledAt: nil,
+                reconciliationError: error.localizedDescription,
+                stateUpdateError: nil
+            )
         }
+    }
+
+    private func updateDeckState(after plan: AppPhysicalPlan, at date: Date) async throws {
+        let deckID: UUID
+        let state: DeckState
+        switch plan.payload {
+        case let .assembly(assembly):
+            deckID = assembly.deckID
+            state = .assembled
+        case let .disassembly(disassembly):
+            deckID = disassembly.deckID
+            state = .planned
+        }
+        guard var deck = try await repository.deckSnapshot(id: deckID)?.deck else {
+            throw AppPhysicalAssemblyError.deckNotFound
+        }
+        guard deck.state != state else { return }
+        deck.state = state
+        deck.updatedAt = date
+        try await repository.saveDeck(deck)
     }
 
     private static func present(plan payload: AppPhysicalPlan.Payload, deck: DeckSnapshot, inventory: AssemblyInventorySnapshot) -> AppPhysicalPlan {
@@ -188,14 +230,16 @@ extension LiveAppDataService {
         }
         let movements = rawMovements.map { movement in
             let printing = inventory.printingsByProductID[movement.productID]
+            let identity = deck.identities[movement.nameSlug]
             let details = [printing?.expansionSlug, printing?.printNumber, printing?.variant, printing?.rarity]
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: " · ")
             return AppPhysicalMovement(
                 movement: movement,
-                cardName: deck.identities[movement.nameSlug]?.displayName ?? printing?.displayName ?? "Unknown card (Product \(movement.productID))",
-                printingDescription: details.isEmpty ? "Product \(movement.productID)" : "\(details) · Product \(movement.productID)"
+                cardName: identity?.displayName ?? printing?.displayName ?? "Unknown card (Product \(movement.productID))",
+                printingDescription: details.isEmpty ? "Product \(movement.productID)" : "\(details) · Product \(movement.productID)",
+                domains: identity?.appVisibleDomains ?? []
             )
         }
         let missing = requirements.filter { $0.missing > 0 }.map {
@@ -203,7 +247,16 @@ extension LiveAppDataService {
         }
         let storageLocations = inventory.locationPolicies.filter { $0.kind == .storage && $0.countsAsAvailable }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-        return AppPhysicalPlan(payload: payload, deckName: deck.deck.name, movements: movements, missingRequirements: missing, returnRoutes: returnRoutes, storageLocations: storageLocations)
+        return AppPhysicalPlan(
+            payload: payload,
+            deckName: deck.deck.name,
+            movements: movements,
+            missingRequirements: missing,
+            returnRoutes: returnRoutes,
+            storageLocations: storageLocations,
+            cardNamesByNameSlug: deck.identities.mapValues(\.displayName),
+            domainsByNameSlug: deck.identities.mapValues(\.appVisibleDomains)
+        )
     }
 }
 
@@ -349,6 +402,8 @@ final class PhysicalAssemblyModel {
             await appModel.reloadAll()
             if let error = outcome.reconciliationError {
                 appModel.notice = "CardNexus returned movement results, but reconciliation failed: \(error). Synchronize before retrying or moving more cards."
+            } else if let error = outcome.stateUpdateError {
+                appModel.notice = "Physical inventory was reconciled, but the deck status could not be updated: \(error)"
             }
         } catch {
             appModel.notice = error.localizedDescription
@@ -393,7 +448,7 @@ struct PhysicalAssemblyConfirmationView: View {
                 footer(proposal)
             }
         }
-        .frame(minWidth: 780, minHeight: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -404,7 +459,13 @@ struct PhysicalAssemblyConfirmationView: View {
                     ForEach(proposal.returnRoutes, id: \.key) { route in
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("\(route.quantity) × \(cardName(for: route, in: proposal))").fontWeight(.medium)
+                                HStack(spacing: 8) {
+                                    Text("\(route.quantity) × \(cardName(for: route, in: proposal))").fontWeight(.medium)
+                                    let domains = domains(for: route, in: proposal)
+                                    if !domains.isEmpty {
+                                        GridCardDomainTags(domains: domains, isRune: false)
+                                    }
+                                }
                                 Text(route.previousLocationName.map { "Previous location: \($0)" } ?? "Previous location was not recorded")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -431,7 +492,11 @@ struct PhysicalAssemblyConfirmationView: View {
     }
 
     private func cardName(for route: DeckReturnRoute, in proposal: AppPhysicalPlan) -> String {
-        proposal.movements.first { $0.movement.nameSlug == route.key.requirement.nameSlug }?.cardName ?? route.key.requirement.nameSlug
+        proposal.cardNamesByNameSlug[route.key.requirement.nameSlug] ?? route.key.requirement.nameSlug
+    }
+
+    private func domains(for route: DeckReturnRoute, in proposal: AppPhysicalPlan) -> [String] {
+        proposal.domainsByNameSlug[route.key.requirement.nameSlug] ?? []
     }
 
     private var header: some View {
@@ -481,7 +546,12 @@ struct PhysicalAssemblyConfirmationView: View {
                                 .font(.headline.monospacedDigit())
                                 .frame(width: 30, alignment: .trailing)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.cardName).fontWeight(.medium)
+                                HStack(spacing: 8) {
+                                    Text(item.cardName).fontWeight(.medium)
+                                    if !item.domains.isEmpty {
+                                        GridCardDomainTags(domains: item.domains, isRune: false)
+                                    }
+                                }
                                 Text(item.printingDescription).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -512,6 +582,9 @@ struct PhysicalAssemblyConfirmationView: View {
                     Label("Reconciliation failed: \(error)", systemImage: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(.orange)
                 } else {
                     Label("Inventory reconciled with CardNexus.", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                if let error = outcome.stateUpdateError {
+                    Label("Deck status could not be updated: \(error)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
                 if let message = workflow.deletionOutcomeMessage {
                     Label(message, systemImage: workflow.deletionCompleted ? "trash.circle.fill" : "exclamationmark.triangle.fill")

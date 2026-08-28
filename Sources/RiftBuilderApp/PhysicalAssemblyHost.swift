@@ -7,27 +7,21 @@ struct PhysicalAssemblyHost: ViewModifier {
     func body(content: Content) -> some View {
         content
             .toolbar {
-                if appModel.destination == .decks, appModel.selectedDeck?.state == .assembled {
+                if appModel.destination == .decks, let deck = appModel.selectedDeck {
                     ToolbarItemGroup {
-                        Button {
-                            Task { await workflow.beginAssembly(deckID: appModel.selectedDeckID, appModel: appModel) }
-                        } label: {
-                            Label("Assemble", systemImage: "shippingbox.and.arrow.backward")
+                        if deck.state == .assembled {
+                            Button {
+                                Task { await workflow.beginDisassembly(deckID: appModel.selectedDeckID, appModel: appModel) }
+                            } label: {
+                                Label("Disassemble", systemImage: "rectangle.stack.badge.minus")
+                            }
+                            .help("Return this deck's physical cards to their previous storage locations")
+                            .disabled(workflow.phase != .idle)
                         }
-                        .help("Review physical cards to move into this deck")
-                        .disabled(workflow.phase != .idle)
-
-                        Button {
-                            Task { await workflow.beginDisassembly(deckID: appModel.selectedDeckID, appModel: appModel) }
-                        } label: {
-                            Label("Disassemble", systemImage: "shippingbox.and.arrow.forward")
-                        }
-                        .help("Return this deck's physical cards to their previous storage locations")
-                        .disabled(workflow.phase != .idle)
                     }
                 }
             }
-            .sheet(isPresented: $workflow.isConfirmationPresented) {
+            .inWindowModal(isPresented: $workflow.isConfirmationPresented, preferredSize: CGSize(width: 900, height: 700)) {
                 PhysicalAssemblyConfirmationView(workflow: workflow, appModel: appModel)
             }
     }

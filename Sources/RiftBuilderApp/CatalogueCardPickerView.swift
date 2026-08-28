@@ -3,7 +3,7 @@ import SwiftUI
 
 struct CatalogueCardPickerView: View {
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var presentedCard: AppCardDetail?
 
     private var eligibleCards: [AppCatalogueCard] {
@@ -76,7 +76,7 @@ struct CatalogueCardPickerView: View {
                         tint: quantity >= zoneMaximum ? .orange : .secondary
                     )
                 }
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Done") { onDismiss() }.keyboardShortcut(.cancelAction)
             }
             .padding()
             Divider()

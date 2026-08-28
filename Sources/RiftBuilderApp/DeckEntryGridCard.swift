@@ -33,30 +33,17 @@ struct DeckEntryGridCard: View {
 
     @ViewBuilder
     private var availabilityContent: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            AdaptiveBadgeLayout(spacing: 6) {
-                QuantityBadge(title: "Owned", value: availability?.totalOwned ?? 0)
-                QuantityBadge(title: "Free", value: availability?.availableInStorage ?? 0, tint: .green)
-                if isAlwaysAvailable {
-                    StatusPill(title: "Always available", systemImage: "infinity", tint: .green)
-                }
-            }
-
-            if !isAlwaysAvailable {
-                AdaptiveBadgeLayout(spacing: 6) {
-                    if let availability, availability.inTargetDeck > 0 {
-                        QuantityBadge(title: "This deck", value: availability.inTargetDeck)
-                    }
-                    if let availability, availability.inOtherDecks > 0 {
-                        QuantityBadge(title: "Other decks", value: availability.inOtherDecks, tint: .orange)
-                    }
-                    let missing = max(0, entry.quantity - (availability?.usableForTargetDeck ?? 0))
-                    if missing > 0 {
-                        QuantityBadge(title: "Missing", value: missing, tint: .red)
-                    }
-                }
+        HStack(spacing: 4) {
+            QuantityBadge(title: "Owned", value: availability?.totalOwned ?? 0, compact: true)
+            QuantityBadge(title: "Free", value: availability?.availableInStorage ?? 0, tint: .green, compact: true)
+            if isAlwaysAvailable {
+                StatusPill(title: "Always available", systemImage: "infinity", tint: .green)
+            } else {
+                QuantityBadge(title: "Other decks", value: availability?.inOtherDecks ?? 0, tint: .orange, compact: true)
+                QuantityBadge(title: "Missing", value: max(0, entry.quantity - (availability?.usableForTargetDeck ?? 0)), tint: .red, compact: true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var quantityControls: some View {

@@ -15,6 +15,12 @@ private struct DeckCardTypeGroup: Identifiable {
     var id: String { title }
 }
 
+private struct DeckLibrarySection: Identifiable {
+    let state: DeckState
+    let decks: [Deck]
+    var id: DeckState { state }
+}
+
 struct DecksView: View {
     @Bindable var model: AppModel
     @Bindable var deckTransfer: DeckTransferModel
@@ -60,6 +66,7 @@ struct DecksView: View {
             ToolbarItem(placement: .principal) {
                 CollectionPresentationPicker(selection: $presentation)
                     .disabled(model.selectedDeckSnapshot == nil)
+                    .help("Choose how cards in this deck are displayed")
             }
             ToolbarItem(placement: .secondaryAction) {
                 Button {
@@ -68,19 +75,34 @@ struct DecksView: View {
                     Label("New Deck", systemImage: "plus")
                 }
                 .keyboardShortcut("n", modifiers: [.command])
+                .help("Create a new deck")
             }
         }
-        .sheet(isPresented: $model.isCardPickerPresented) {
-            CatalogueCardPickerView(model: model)
-                .frame(minWidth: 620, minHeight: 520)
+        .inWindowModal(isPresented: $model.isCardPickerPresented, preferredSize: CGSize(width: 820, height: 680)) {
+            CatalogueCardPickerView(model: model) {
+                model.isCardPickerPresented = false
+            }
         }
     }
 
     private var deckLibrary: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(model.decks) { deck in
-                    deckLibraryRow(deck)
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(deckLibrarySections) { section in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            Text(section.state.appTitle)
+                                .font(.subheadline.weight(.semibold))
+                            Text(section.decks.count, format: .number)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 4)
+
+                        ForEach(section.decks) { deck in
+                            deckLibraryRow(deck)
+                        }
+                    }
                 }
             }
             .padding(14)
@@ -94,6 +116,28 @@ struct DecksView: View {
         .onChange(of: model.selectedDeckID) { _, _ in
             Task { await model.loadSelectedDeck() }
         }
+    }
+
+    private var deckLibrarySections: [DeckLibrarySection] {
+        DeckState.allCases
+            .sorted { $0.appSortOrder < $1.appSortOrder }
+            .compactMap { state in
+                let decks = model.decks
+                    .filter { $0.state == state }
+                    .sorted(by: deckNameComesBefore)
+                return decks.isEmpty ? nil : DeckLibrarySection(state: state, decks: decks)
+            }
+    }
+
+    private func deckNameComesBefore(_ lhs: Deck, _ rhs: Deck) -> Bool {
+        let localizedComparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+        if localizedComparison != .orderedSame {
+            return localizedComparison == .orderedAscending
+        }
+        if lhs.name != rhs.name {
+            return lhs.name < rhs.name
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 
     private func deckLibraryRow(_ deck: Deck) -> some View {
@@ -495,16 +539,17 @@ struct DeckNamingSheet: View {
 
     let request: DeckNamingRequest
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var name: String
     @State private var creationSource: CreationSource = .empty
     @State private var selectedLocationKey: String?
     @State private var isWorking = false
     @FocusState private var nameFocused: Bool
 
-    init(request: DeckNamingRequest, model: AppModel) {
+    init(request: DeckNamingRequest, model: AppModel, onDismiss: @escaping () -> Void) {
         self.request = request
         self.model = model
+        self.onDismiss = onDismiss
         _name = State(initialValue: request.initialName)
         _selectedLocationKey = State(initialValue: model.importableDeckLocations.first?.normalizedName)
     }
@@ -557,7 +602,7 @@ struct DeckNamingSheet: View {
                 Spacer()
                 Button("Cancel") {
                     model.deckNamingRequest = nil
-                    dismiss()
+                    onDismiss()
                 }
                 .keyboardShortcut(.cancelAction)
                 Button(confirmationTitle) { commit() }
@@ -609,11 +654,11 @@ struct DeckNamingSheet: View {
             if request.purpose == .create, creationSource == .location {
                 if let location = selectedLocation, await model.importDeck(from: location, named: submittedName) {
                     model.deckNamingRequest = nil
-                    dismiss()
+                    onDismiss()
                 }
             } else {
                 await model.commitDeckName(submittedName, request: request)
-                dismiss()
+                onDismiss()
             }
             isWorking = false
         }
@@ -686,57 +731,5 @@ private struct DeckEntryRow: View {
         }
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct CardPickerView: View {
-    @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-
-    private var cards: [AppInventoryCard] {
-        guard !model.pickerSearch.isEmpty else { return model.inventory }
-        return model.inventory.filter { $0.identity.displayName.localizedCaseInsensitiveContains(model.pickerSearch) }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Add a Card").font(.title2.weight(.semibold))
-                    Text("Missing cards remain selectable so you can plan future upgrades.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("Zone", selection: $model.pickerZone) {
-                    ForEach(DeckZone.allCases.sorted { $0.appSortOrder < $1.appSortOrder }, id: \.self) { zone in Text(zone.appTitle).tag(zone) }
-                }
-                .frame(width: 175)
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding()
-            Divider()
-            List(cards) { card in
-                HStack(spacing: 12) {
-                    CardArtwork(card: card, width: 36)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(card.identity.displayName).fontWeight(.medium)
-                        Text([card.identity.cardType, card.identity.appVisibleDomains.joined(separator: " • ")].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    QuantityBadge(title: "Owned", value: card.availability.totalOwned)
-                    if model.pickerZone == .rune {
-                        StatusPill(title: "Always available", systemImage: "infinity", tint: .green)
-                    } else {
-                        QuantityBadge(title: "Free", value: card.availability.availableInStorage, tint: card.availability.availableInStorage > 0 ? .green : .secondary)
-                    }
-                    Button("Add") { Task { await model.addCard(card, zone: model.pickerZone) } }
-                        .buttonStyle(.borderedProminent)
-                }
-                .padding(.vertical, 4)
-            }
-            .searchable(text: $model.pickerSearch, prompt: "Search the card catalogue")
-        }
     }
 }
