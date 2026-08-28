@@ -212,6 +212,8 @@ private struct InventoryTable: View {
                 .width(55)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
         .accessibilityLabel("Inventory cards")
     }
 }

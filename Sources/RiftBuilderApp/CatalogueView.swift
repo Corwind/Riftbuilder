@@ -3,7 +3,6 @@ import SwiftUI
 struct CatalogueView: View {
     @Bindable var model: AppModel
     @State private var search = ""
-    @State private var presentation: InventoryPresentation = .grid
     @State private var presentedCard: AppCardDetail?
 
     private let columns = [GridItem(.adaptive(minimum: 220), spacing: 14)]
@@ -41,7 +40,7 @@ struct CatalogueView: View {
         .task { await model.loadCatalogue() }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                CollectionPresentationPicker(selection: $presentation)
+                CollectionPresentationPicker(selection: $model.cataloguePresentation)
             }
         }
         .cardDetailSheet(item: $presentedCard)
@@ -49,7 +48,7 @@ struct CatalogueView: View {
 
     @ViewBuilder
     private var catalogueContent: some View {
-        if presentation == .table {
+        if model.cataloguePresentation == .table {
             Table(filteredCards) {
                 TableColumn("Card") { card in
                     HStack(spacing: 10) {
@@ -73,6 +72,8 @@ struct CatalogueView: View {
                 }
                 .width(75)
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 14) {

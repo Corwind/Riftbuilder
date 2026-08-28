@@ -8,9 +8,13 @@ final class AppModel {
     private static let alwaysAvailableRunesKey = "riftbuilder.deckInventory.alwaysAvailableRunes"
     private static let alwaysAvailableBattlefieldsKey = "riftbuilder.deckInventory.alwaysAvailableBattlefields"
     private static let forceCatalogueSyncKey = "riftbuilder.synchronization.forceCatalogueSync"
+    private static let cataloguePresentationKey = "riftbuilder.catalogue.presentation"
 
     var destination: AppDestination? = .inventory
     var inventoryPresentation: InventoryPresentation = .grid
+    var cataloguePresentation: InventoryPresentation {
+        didSet { defaults.set(cataloguePresentation.rawValue, forKey: Self.cataloguePresentationKey) }
+    }
     var inventoryScope: InventoryScope = .all
     var inventorySearch = ""
     var inventoryLocationFilter: String?
@@ -61,6 +65,7 @@ final class AppModel {
         alwaysAvailableRunes = defaults.object(forKey: Self.alwaysAvailableRunesKey) as? Bool ?? true
         alwaysAvailableBattlefields = defaults.object(forKey: Self.alwaysAvailableBattlefieldsKey) as? Bool ?? true
         forceCatalogueSync = defaults.object(forKey: Self.forceCatalogueSyncKey) as? Bool ?? false
+        cataloguePresentation = defaults.string(forKey: Self.cataloguePresentationKey).flatMap(InventoryPresentation.init(rawValue:)) ?? .grid
     }
 
     var deckInventoryAvailability: DeckInventoryAvailability {
