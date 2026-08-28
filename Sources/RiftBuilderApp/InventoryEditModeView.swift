@@ -29,13 +29,6 @@ struct InventoryEditModeView: View {
             })
     }
 
-    private var invalidCardIDs: Set<String> {
-        Set(
-            model.inventory.compactMap { card in
-                guard changedCardIDs.contains(card.id) else { return nil }
-                return editedTotal(for: card) == card.availability.totalOwned ? nil : card.id
-            })
-    }
 
     private var hasChanges: Bool { !changedCardIDs.isEmpty }
 
@@ -67,55 +60,44 @@ struct InventoryEditModeView: View {
     }
 
     private var editHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Edit Inventory").font(.headline)
+        HStack(spacing: 8) {
+            if hasChanges {
+                StatusPill(
+                    title: "\(changedCardIDs.count) changed",
+                    systemImage: "pencil",
+                    tint: .accentColor
+                )
+            }
+            Spacer()
+            if isSaving { ProgressView().controlSize(.small) }
+            Button("Revert") { drafts.removeAll() }
+                .disabled(!hasChanges || isSaving)
+            Button("Cancel") {
                 if hasChanges {
-                    StatusPill(
-                        title: "\(changedCardIDs.count) changed",
-                        systemImage: invalidCardIDs.isEmpty ? "pencil" : "exclamationmark.triangle.fill",
-                        tint: invalidCardIDs.isEmpty ? .accentColor : .orange
-                    )
+                    isConfirmingDiscard = true
+                } else {
+                    finishEditing()
                 }
-                Spacer()
-                if isSaving { ProgressView().controlSize(.small) }
             }
-            Text("Reallocate each card's owned copies across locations. The owned total must stay the same.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Spacer()
-                Button("Revert") { drafts.removeAll() }
-                    .disabled(!hasChanges || isSaving)
-                Button("Cancel") {
-                    if hasChanges {
-                        isConfirmingDiscard = true
-                    } else {
-                        finishEditing()
-                    }
-                }
-                .disabled(isSaving)
-                Button("Save Changes") {
-                    Task { await save() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!hasChanges || !invalidCardIDs.isEmpty || isSaving)
-                .help(saveButtonHelp)
+            .disabled(isSaving)
+            Button("Save Changes") {
+                Task { await save() }
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasChanges || isSaving)
+            .help(saveButtonHelp)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.background.secondary)
+        .padding(.vertical, 8)
     }
 
     private var saveButtonHelp: String {
-        if !invalidCardIDs.isEmpty { return "Balance every changed card before saving" }
         if !hasChanges { return "Change a location quantity before saving" }
         return "Save location quantities to CardNexus"
     }
     private func inventoryCardEditor(_ card: AppInventoryCard) -> some View {
         let editedTotal = editedTotal(for: card)
-        let isBalanced = editedTotal == card.availability.totalOwned
+        let totalDelta = editedTotal - card.availability.totalOwned
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 CardArtwork(card: card, width: 42)
@@ -127,15 +109,18 @@ struct InventoryEditModeView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 3) {
-                    QuantityBadge(title: "Owned", value: card.availability.totalOwned)
+                    QuantityBadge(title: "Owned", value: editedTotal)
                     if changedCardIDs.contains(card.id) {
                         Label(
-                            isBalanced
-                                ? "Balanced" : "Allocated \(editedTotal) of \(card.availability.totalOwned)",
-                            systemImage: isBalanced ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                            totalDelta == 0
+                                ? "Locations changed"
+                                : "\(totalDelta > 0 ? "+" : "")\(totalDelta) total",
+                            systemImage: totalDelta == 0
+                                ? "arrow.left.arrow.right"
+                                : totalDelta > 0 ? "plus.circle.fill" : "minus.circle.fill"
                         )
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(isBalanced ? .green : .orange)
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -145,7 +130,7 @@ struct InventoryEditModeView: View {
                     InventoryLocationQuantityControl(
                         location: location,
                         quantity: quantityBinding(card: card, location: location),
-                        isReadOnly: location.normalizedName == "__unlocated__" || location.kind == .unavailable
+                        isReadOnly: location.normalizedName == "__unlocated__"
                     )
                 }
             }
@@ -157,12 +142,6 @@ struct InventoryEditModeView: View {
                 tintStrength: changedCardIDs.contains(card.id) ? 0.10 : 0.055,
                 shadowStrength: 0.07
             )
-        }
-        .overlay {
-            if changedCardIDs.contains(card.id), !isBalanced {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(.orange.opacity(0.7), lineWidth: 1.5)
-            }
         }
     }
     private func quantityBinding(card: AppInventoryCard, location: LocationPolicy) -> Binding<Int> {
@@ -218,7 +197,7 @@ struct InventoryEditModeView: View {
     }
 
     private func save() async {
-        guard invalidCardIDs.isEmpty, hasChanges else { return }
+        guard hasChanges else { return }
         isSaving = true
         let saved = await model.saveInventoryLocationQuantities(edits)
         isSaving = false
@@ -257,8 +236,11 @@ private struct InventoryLocationQuantityControl: View {
                     quantity = max(0, quantity - 1)
                 } label: {
                     Image(systemName: "minus")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 22, height: 22)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
                 .disabled(quantity == 0)
                 .accessibilityLabel("Remove one from \(location.displayName)")
 
@@ -271,8 +253,11 @@ private struct InventoryLocationQuantityControl: View {
                     quantity += 1
                 } label: {
                     Image(systemName: "plus")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 22, height: 22)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
                 .disabled(isReadOnly)
                 .accessibilityLabel("Add one to \(location.displayName)")
             }

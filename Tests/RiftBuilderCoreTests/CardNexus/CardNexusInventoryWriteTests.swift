@@ -112,6 +112,53 @@ final class CardNexusInventoryWriteTests: XCTestCase {
         XCTAssertTrue(captured.isEmpty)
     }
 
+    func testBulkUpdateSendsRelativeQuantityAdjustmentsAndLocationSplits() async throws {
+        let transport = WriteTransport(responses: [
+            writeResponse(#"{"results":[{"index":0,"status":"ok","inventoryId":"line-a"},{"index":1,"status":"ok","inventoryId":"line-b"}]}"#),
+        ])
+        let client = makeWriteClient(transport)
+        _ = try await client.bulkUpdateInventoryLines(
+            InventoryBulkUpdateRequest(
+                idempotencyKey: "inventory-edit-batch-0",
+                items: [
+                    InventoryBulkUpdateItem(inventoryID: "line-a", quantityAdjustment: 2),
+                    InventoryBulkUpdateItem(
+                        inventoryID: "line-b",
+                        destinationLocationName: "Trade Binder",
+                        count: 1
+                    ),
+                ]
+            ))
+
+        let captured = await transport.requests()
+        let request = try XCTUnwrap(captured.first)
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.path, "/v1/inventory/bulk/update")
+        XCTAssertEqual(request.idempotencyKey, "inventory-edit-batch-0")
+        let json = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+        )
+        let items = try XCTUnwrap(json["items"] as? [[String: Any]])
+        let quantity = try XCTUnwrap(items[0]["quantity"] as? [String: Any])
+        XCTAssertEqual(quantity["adjust"] as? Int, 2)
+        XCTAssertNil(items[0]["location"])
+        XCTAssertNil(items[0]["count"])
+        XCTAssertEqual(items[1]["location"] as? String, "Trade Binder")
+        XCTAssertEqual(items[1]["count"] as? Int, 1)
+        XCTAssertNil(items[1]["quantity"])
+    }
+
+    func testInventoryLineDeleteUsesEncodedPath() async throws {
+        let transport = WriteTransport(responses: [writeResponse(#"{"deleted":true}"#)])
+        try await makeWriteClient(transport).deleteInventoryLine(inventoryID: "line / one")
+
+        let captured = await transport.requests()
+        let request = try XCTUnwrap(captured.first)
+        XCTAssertEqual(request.method, "DELETE")
+        XCTAssertEqual(request.percentEncodedPath, "/v1/inventory/line%20%2F%20one")
+        XCTAssertEqual(String(decoding: request.body, as: UTF8.self), "{}")
+    }
+
     private func makeWriteClient(_ transport: any HTTPTransport, maximumAttempts: Int = 1) -> CardNexusClient {
         CardNexusClient(
             baseURL: URL(string: "https://api.example/v1")!,

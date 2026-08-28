@@ -28,11 +28,8 @@ struct InventoryView: View {
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                if isEditingInventory {
-                    Label("Edit Mode", systemImage: "pencil")
-                        .font(.headline)
-                } else {
+            if !isEditingInventory {
+                ToolbarItem(placement: .principal) {
                     CollectionPresentationPicker(selection: $model.inventoryPresentation)
                 }
             }

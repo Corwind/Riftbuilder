@@ -3,33 +3,41 @@ import RiftBuilderCore
 
 struct AppInventoryQuantityEditResult: Sendable {
     let editedCardCount: Int
-    let movementCount: Int
+    let bulkUpdateCount: Int
+    let deletedLineCount: Int
+    let addedQuantity: Int
+    let removedQuantity: Int
     let movedQuantity: Int
     let synchronizationWarning: String?
 }
 
 enum AppInventoryQuantityEditError: LocalizedError {
     case noChanges
-    case executionFailed(completedMovements: Int, rejectionCodes: [String])
-    case requestFailed(completedMovements: Int, reason: String)
+    case executionFailed(completedUpdates: Int, completedDeletions: Int, rejectionCodes: [String])
+    case requestFailed(completedUpdates: Int, completedDeletions: Int, reason: String)
     case requestAndReconciliationFailed(
-        completedMovements: Int, request: String, reconciliation: String)
+        completedUpdates: Int,
+        completedDeletions: Int,
+        request: String,
+        reconciliation: String
+    )
 
     var errorDescription: String? {
         switch self {
         case .noChanges:
             return "No inventory quantities changed."
-        case .executionFailed(let completedMovements, let rejectionCodes):
-            let codes =
-                rejectionCodes.isEmpty ? "an unknown error" : rejectionCodes.joined(separator: ", ")
-            return
-                "CardNexus rejected part of the edit after \(completedMovements) movement(s) succeeded (\(codes)). Inventory was refreshed before returning."
-        case .requestFailed(let completedMovements, let reason):
-            return
-                "The inventory edit stopped after \(completedMovements) movement(s) succeeded: \(reason) Inventory was refreshed before returning."
-        case .requestAndReconciliationFailed(let completedMovements, let request, let reconciliation):
-            return
-                "The inventory edit stopped after \(completedMovements) movement(s) succeeded: \(request) Refreshing inventory also failed: \(reconciliation) Synchronize before editing again."
+        case .executionFailed(let completedUpdates, let completedDeletions, let rejectionCodes):
+            let codes = rejectionCodes.isEmpty ? "an unknown error" : rejectionCodes.joined(separator: ", ")
+            return "CardNexus rejected part of the edit after \(completedUpdates) update(s) and \(completedDeletions) deletion(s) succeeded (\(codes)). Inventory was refreshed before returning."
+        case .requestFailed(let completedUpdates, let completedDeletions, let reason):
+            return "The inventory edit stopped after \(completedUpdates) update(s) and \(completedDeletions) deletion(s) succeeded: \(reason) Inventory was refreshed before returning."
+        case .requestAndReconciliationFailed(
+            let completedUpdates,
+            let completedDeletions,
+            let request,
+            let reconciliation
+        ):
+            return "The inventory edit stopped after \(completedUpdates) update(s) and \(completedDeletions) deletion(s) succeeded: \(request) Refreshing inventory also failed: \(reconciliation) Synchronize before editing again."
         }
     }
 }
@@ -47,34 +55,34 @@ extension LiveAppDataService {
         _ = try await refreshInventoryOnly()
         let snapshot = try await assemblyStore.assemblyInventorySnapshot()
         let plan = try InventoryLocationQuantityEditPlanner().makePlan(
-            inventory: snapshot, edits: edits)
-        guard !plan.movements.isEmpty else { throw AppInventoryQuantityEditError.noChanges }
+            inventory: snapshot,
+            edits: edits
+        )
+        guard !plan.updates.isEmpty || !plan.deletions.isEmpty else {
+            throw AppInventoryQuantityEditError.noChanges
+        }
 
-        let batches = movementBatches(plan.movements)
-        var completedMovements = 0
+        let batches = updateBatches(plan.updates)
+        var completedUpdates = 0
+        var completedDeletions = 0
         var rejectionCodes: Set<String> = []
 
         do {
             execution: for (batchIndex, batch) in batches.enumerated() {
                 try Task.checkCancellation()
-                let response = try await cardNexus.bulkMoveInventoryLines(
-                    InventoryBulkMoveRequest(
-                        idempotencyKey:
-                            "riftbuilder-inventory-edit-\(plan.id.uuidString.lowercased())-\(batchIndex)",
-                        moves: batch.map {
-                            InventoryBulkLocationMove(
-                                inventoryID: $0.inventoryID,
-                                quantity: $0.quantity,
-                                destinationLocationName: $0.destinationLocationName
-                            )
-                        }
+                let response = try await cardNexus.bulkUpdateInventoryLines(
+                    InventoryBulkUpdateRequest(
+                        idempotencyKey: "riftbuilder-inventory-edit-\(plan.id.uuidString.lowercased())-\(batchIndex)",
+                        items: batch.map(\.requestItem)
                     ))
                 let resultsByIndex = Dictionary(
-                    response.results.map { ($0.index, $0.status) }, uniquingKeysWith: { first, _ in first })
+                    response.results.map { ($0.index, $0.status) },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 for index in batch.indices {
                     switch resultsByIndex[index] {
                     case .succeeded:
-                        completedMovements += 1
+                        completedUpdates += 1
                     case .rejected(let code, _):
                         rejectionCodes.insert(code)
                     case nil:
@@ -83,19 +91,31 @@ extension LiveAppDataService {
                 }
                 if !rejectionCodes.isEmpty { break execution }
             }
+
+            if rejectionCodes.isEmpty {
+                for deletion in plan.deletions {
+                    try Task.checkCancellation()
+                    try await cardNexus.deleteInventoryLine(inventoryID: deletion.inventoryID)
+                    completedDeletions += 1
+                }
+            }
         } catch {
             let requestMessage = error.localizedDescription
             do {
                 _ = try await refreshInventoryOnly()
             } catch let reconciliationError {
                 throw AppInventoryQuantityEditError.requestAndReconciliationFailed(
-                    completedMovements: completedMovements,
+                    completedUpdates: completedUpdates,
+                    completedDeletions: completedDeletions,
                     request: requestMessage,
                     reconciliation: reconciliationError.localizedDescription
                 )
             }
             throw AppInventoryQuantityEditError.requestFailed(
-                completedMovements: completedMovements, reason: requestMessage)
+                completedUpdates: completedUpdates,
+                completedDeletions: completedDeletions,
+                reason: requestMessage
+            )
         }
 
         let synchronizationWarning: String?
@@ -107,30 +127,36 @@ extension LiveAppDataService {
         }
         if !rejectionCodes.isEmpty {
             throw AppInventoryQuantityEditError.executionFailed(
-                completedMovements: completedMovements,
+                completedUpdates: completedUpdates,
+                completedDeletions: completedDeletions,
                 rejectionCodes: rejectionCodes.sorted()
             )
         }
         return AppInventoryQuantityEditResult(
             editedCardCount: edits.count,
-            movementCount: completedMovements,
+            bulkUpdateCount: completedUpdates,
+            deletedLineCount: completedDeletions,
+            addedQuantity: plan.addedQuantity,
+            removedQuantity: plan.removedQuantity,
             movedQuantity: plan.movedQuantity,
             synchronizationWarning: synchronizationWarning
         )
     }
 
-    private func movementBatches(_ movements: [BulkLocationMovement]) -> [[BulkLocationMovement]] {
-        var pending = movements
-        var batches: [[BulkLocationMovement]] = []
+    private func updateBatches(
+        _ updates: [PlannedInventoryQuantityUpdate]
+    ) -> [[PlannedInventoryQuantityUpdate]] {
+        var pending = updates
+        var batches: [[PlannedInventoryQuantityUpdate]] = []
         while !pending.isEmpty {
             var usedInventoryIDs: Set<String> = []
-            var batch: [BulkLocationMovement] = []
-            var deferred: [BulkLocationMovement] = []
-            for movement in pending {
-                if batch.count < 200, usedInventoryIDs.insert(movement.inventoryID).inserted {
-                    batch.append(movement)
+            var batch: [PlannedInventoryQuantityUpdate] = []
+            var deferred: [PlannedInventoryQuantityUpdate] = []
+            for update in pending {
+                if batch.count < 200, usedInventoryIDs.insert(update.inventoryID).inserted {
+                    batch.append(update)
                 } else {
-                    deferred.append(movement)
+                    deferred.append(update)
                 }
             }
             batches.append(batch)
@@ -169,8 +195,15 @@ extension AppModel {
             await loadInventory()
             await loadLocations()
             await loadDecks()
-            var message =
-                "Updated \(result.editedCardCount) card\(result.editedCardCount == 1 ? "" : "s") across \(result.movementCount) inventory movement\(result.movementCount == 1 ? "" : "s")."
+            var changes: [String] = []
+            if result.addedQuantity > 0 { changes.append("added \(result.addedQuantity)") }
+            if result.removedQuantity > 0 { changes.append("removed \(result.removedQuantity)") }
+            if result.movedQuantity > 0 { changes.append("moved \(result.movedQuantity)") }
+            let changeSummary = changes.isEmpty ? "updated quantities" : changes.joined(separator: ", ")
+            var message = "Saved \(result.editedCardCount) card edit\(result.editedCardCount == 1 ? "" : "s"): \(changeSummary)."
+            if result.deletedLineCount > 0 {
+                message += " Removed \(result.deletedLineCount) empty inventory line\(result.deletedLineCount == 1 ? "" : "s")."
+            }
             if let warning = result.synchronizationWarning {
                 message += " CardNexus saved the changes, but the final refresh failed: \(warning)"
             }
