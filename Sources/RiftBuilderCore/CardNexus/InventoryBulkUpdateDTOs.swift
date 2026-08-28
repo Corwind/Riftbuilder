@@ -22,14 +22,51 @@ extension InventoryBulkMoveValidationError: LocalizedError {
     }
 }
 
+public enum InventoryBulkUpdateValidationError: Error, Hashable, Sendable {
+    case emptyIdempotencyKey
+    case invalidItemCount(Int)
+    case duplicateInventoryID(String)
+    case invalidItem(index: Int)
+}
+
+extension InventoryBulkUpdateValidationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .emptyIdempotencyKey:
+            return "The CardNexus bulk-update idempotency key cannot be empty."
+        case let .invalidItemCount(count):
+            return "CardNexus bulk update accepts between 1 and 200 items, not \(count)."
+        case let .duplicateInventoryID(id):
+            return "Inventory line '\(id)' appears more than once in the bulk update."
+        case let .invalidItem(index):
+            return "Bulk inventory update at index \(index) is invalid."
+        }
+    }
+}
+
+public enum InventoryLineDeleteValidationError: Error, Hashable, Sendable {
+    case emptyInventoryID
+}
+
+extension InventoryLineDeleteValidationError: LocalizedError {
+    public var errorDescription: String? {
+        "The CardNexus inventory line ID cannot be empty."
+    }
+}
+
 struct InventoryBulkUpdateRequestDTO: Encodable, Sendable {
     let items: [InventoryBulkUpdateItemDTO]
 }
 
 struct InventoryBulkUpdateItemDTO: Encodable, Sendable {
     let inventoryId: String
-    let location: String
-    let count: Int
+    let quantity: InventoryQuantityAdjustmentDTO?
+    let location: String?
+    let count: Int?
+}
+
+struct InventoryQuantityAdjustmentDTO: Encodable, Sendable {
+    let adjust: Int
 }
 
 struct InventoryBulkUpdateResponseDTO: Decodable, Sendable {

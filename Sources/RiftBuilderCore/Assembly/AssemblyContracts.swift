@@ -45,6 +45,35 @@ public struct InventoryBulkMoveRequest: Codable, Hashable, Sendable {
         self.moves = moves
     }
 }
+public struct InventoryBulkUpdateItem: Codable, Hashable, Sendable {
+    public let inventoryID: String
+    public let quantityAdjustment: Int?
+    public let destinationLocationName: String?
+    public let count: Int?
+
+    public init(
+        inventoryID: String,
+        quantityAdjustment: Int? = nil,
+        destinationLocationName: String? = nil,
+        count: Int? = nil
+    ) {
+        self.inventoryID = inventoryID
+        self.quantityAdjustment = quantityAdjustment
+        self.destinationLocationName = destinationLocationName
+        self.count = count
+    }
+}
+
+public struct InventoryBulkUpdateRequest: Codable, Hashable, Sendable {
+    public let idempotencyKey: String
+    public let items: [InventoryBulkUpdateItem]
+
+    public init(idempotencyKey: String, items: [InventoryBulkUpdateItem]) {
+        self.idempotencyKey = idempotencyKey
+        self.items = items
+    }
+}
+
 
 public enum InventoryBulkMoveItemStatus: Codable, Hashable, Sendable {
     case succeeded(inventoryID: String)

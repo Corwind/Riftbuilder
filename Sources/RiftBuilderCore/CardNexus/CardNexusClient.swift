@@ -114,9 +114,50 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
                 throw InventoryBulkMoveValidationError.duplicateInventoryID(move.inventoryID)
             }
         }
+        return try await bulkUpdateInventoryLines(
+            InventoryBulkUpdateRequest(
+                idempotencyKey: request.idempotencyKey,
+                items: request.moves.map {
+                    InventoryBulkUpdateItem(
+                        inventoryID: $0.inventoryID,
+                        destinationLocationName: $0.destinationLocationName,
+                        count: $0.quantity
+                    )
+                }
+            ))
+    }
 
-        let body = InventoryBulkUpdateRequestDTO(items: request.moves.map {
-            InventoryBulkUpdateItemDTO(inventoryId: $0.inventoryID, location: $0.destinationLocationName, count: $0.quantity)
+    public func bulkUpdateInventoryLines(_ request: InventoryBulkUpdateRequest) async throws -> InventoryBulkMoveResponse {
+        guard !request.idempotencyKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw InventoryBulkUpdateValidationError.emptyIdempotencyKey
+        }
+        guard (1 ... 200).contains(request.items.count) else {
+            throw InventoryBulkUpdateValidationError.invalidItemCount(request.items.count)
+        }
+        var seenIDs: Set<String> = []
+        for (index, item) in request.items.enumerated() {
+            let destination = item.destinationLocationName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasQuantityChange = item.quantityAdjustment.map { $0 != 0 } == true
+            let hasLocationChange = destination.map { !$0.isEmpty } == true
+            let hasValidCount = item.count.map { $0 > 0 } ?? true
+            guard !item.inventoryID.isEmpty,
+                  hasQuantityChange || hasLocationChange,
+                  hasValidCount,
+                  item.count == nil || hasLocationChange,
+                  item.count == nil || item.quantityAdjustment == nil
+            else { throw InventoryBulkUpdateValidationError.invalidItem(index: index) }
+            guard seenIDs.insert(item.inventoryID).inserted else {
+                throw InventoryBulkUpdateValidationError.duplicateInventoryID(item.inventoryID)
+            }
+        }
+
+        let body = InventoryBulkUpdateRequestDTO(items: request.items.map {
+            InventoryBulkUpdateItemDTO(
+                inventoryId: $0.inventoryID,
+                quantity: $0.quantityAdjustment.map(InventoryQuantityAdjustmentDTO.init(adjust:)),
+                location: $0.destinationLocationName,
+                count: $0.count
+            )
         })
         var urlRequest = try authenticatedRequest(path: "inventory/bulk/update")
         urlRequest.httpMethod = "POST"
@@ -124,6 +165,16 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(request.idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         return try await decoded(InventoryBulkUpdateResponseDTO.self, from: urlRequest).model
+    }
+
+    public func deleteInventoryLine(inventoryID: String) async throws {
+        let trimmed = inventoryID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw InventoryLineDeleteValidationError.emptyInventoryID }
+        var request = try authenticatedInventoryLineRequest(inventoryID: trimmed)
+        request.httpMethod = "DELETE"
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        _ = try await decoded(InventoryLocationDeleteResponseDTO.self, from: request)
     }
 
     private func authenticatedRequest(path: String, queryItems: [URLQueryItem] = []) throws -> URLRequest {
@@ -138,6 +189,18 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
         else { throw CardNexusClientError.invalidURL }
         let basePath = components.percentEncodedPath.hasSuffix("/") ? components.percentEncodedPath : components.percentEncodedPath + "/"
         components.percentEncodedPath = basePath + "inventory/locations/" + encodedName
+        guard let url = components.url else { throw CardNexusClientError.invalidURL }
+        return try authenticatedRequest(url: url)
+    }
+
+    private func authenticatedInventoryLineRequest(inventoryID: String) throws -> URLRequest {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/%")
+        guard let encodedID = inventoryID.addingPercentEncoding(withAllowedCharacters: allowed),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { throw CardNexusClientError.invalidURL }
+        let basePath = components.percentEncodedPath.hasSuffix("/") ? components.percentEncodedPath : components.percentEncodedPath + "/"
+        components.percentEncodedPath = basePath + "inventory/" + encodedID
         guard let url = components.url else { throw CardNexusClientError.invalidURL }
         return try authenticatedRequest(url: url)
     }
