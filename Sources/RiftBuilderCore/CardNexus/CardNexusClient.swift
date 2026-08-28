@@ -89,7 +89,7 @@ public struct CardNexusClient: CardNexusServicing, CardNexusInventoryWriting, Ca
         request.httpMethod = "DELETE"
         request.httpBody = Data("{}".utf8)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        _ = try await decoded(InventoryLocationDeleteResponseDTO.self, from: request)
+        _ = try await perform(request)
     }
 
     public func bulkMoveInventoryLines(_ request: InventoryBulkMoveRequest) async throws -> InventoryBulkMoveResponse {

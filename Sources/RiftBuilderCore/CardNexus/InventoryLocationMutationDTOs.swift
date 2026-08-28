@@ -5,7 +5,3 @@ struct InventoryLocationUpdateDTO: Encodable, Sendable {
     let color: String?
     let icon: String?
 }
-
-struct InventoryLocationDeleteResponseDTO: Decodable, Sendable {
-    let deleted: Bool
-}

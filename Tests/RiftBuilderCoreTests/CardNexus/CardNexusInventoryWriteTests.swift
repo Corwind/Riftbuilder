@@ -83,8 +83,8 @@ final class CardNexusInventoryWriteTests: XCTestCase {
         XCTAssertEqual(json["icon"] as? String, "archivebox")
     }
 
-    func testLocationDeleteUsesDeleteWithEmptyJSONBody() async throws {
-        let transport = WriteTransport(responses: [writeResponse(#"{"deleted":true}"#)])
+    func testLocationDeleteAcceptsSuccessfulEmptyResponse() async throws {
+        let transport = WriteTransport(responses: [writeResponse("", status: 204)])
         try await makeWriteClient(transport).deleteInventoryLocation(named: "Empty Box")
 
         let captured = await transport.requests()
