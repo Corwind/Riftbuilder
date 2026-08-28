@@ -163,15 +163,16 @@ struct BulkMoveSelection: Identifiable {
 struct BulkMoveInventoryView: View {
     let selection: BulkMoveSelection
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var sourceLocationKey: String?
     @State private var destinationLocationKey: String?
     @State private var isMoving = false
     @State private var isConfirming = false
 
-    init(selection: BulkMoveSelection, model: AppModel) {
+    init(selection: BulkMoveSelection, model: AppModel, onDismiss: @escaping () -> Void) {
         self.selection = selection
         self.model = model
+        self.onDismiss = onDismiss
         _sourceLocationKey = State(initialValue: selection.initialSourceLocationKey)
         let initialDestination = model.locations.first {
             $0.normalizedName != "__unlocated__" && $0.normalizedName != selection.initialSourceLocationKey
@@ -249,7 +250,7 @@ struct BulkMoveInventoryView: View {
             }
 
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onDismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(isMoving ? "Moving…" : "Review Move") { isConfirming = true }
@@ -283,7 +284,7 @@ struct BulkMoveInventoryView: View {
                 destinationLocationName: destination.displayName
             )
             isMoving = false
-            if succeeded { dismiss() }
+            if succeeded { onDismiss() }
         }
     }
 }

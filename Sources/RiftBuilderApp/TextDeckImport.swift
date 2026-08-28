@@ -262,7 +262,7 @@ struct TextDeckImportHost: ViewModifier {
                     .help("Create a new deck from a pasted RiftDeck text export")
                 }
             }
-            .sheet(isPresented: $workflow.isPresented) {
+            .inWindowModal(isPresented: $workflow.isPresented, preferredSize: CGSize(width: 940, height: 720)) {
                 TextDeckImportView(workflow: workflow, appModel: appModel)
             }
     }

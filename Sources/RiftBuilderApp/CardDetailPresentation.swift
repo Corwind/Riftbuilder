@@ -57,16 +57,17 @@ struct AppCardDetail: Identifiable, Hashable {
 
 extension View {
     func cardDetailSheet(item: Binding<AppCardDetail?>) -> some View {
-        sheet(item: item) { card in
-            CardDetailSheet(card: card)
-                .frame(minWidth: 700, idealWidth: 760, minHeight: 500, idealHeight: 560)
+        inWindowModal(item: item, preferredSize: CGSize(width: 760, height: 620)) { card in
+            CardDetailSheet(card: card) {
+                item.wrappedValue = nil
+            }
         }
     }
 }
 
 private struct CardDetailSheet: View {
     let card: AppCardDetail
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
 
     private var rulesText: String? {
         card.identity.attributes.firstText(for: [
@@ -96,7 +97,7 @@ private struct CardDetailSheet: View {
             HStack {
                 Text("Card Details").font(.headline)
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done") { onDismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)

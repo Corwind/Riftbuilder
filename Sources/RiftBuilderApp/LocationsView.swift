@@ -58,17 +58,22 @@ struct LocationsView: View {
                 Label("Refresh Locations", systemImage: "arrow.clockwise")
             }
         }
-        .sheet(isPresented: $isCreatingLocation) {
-            CreateLocationView(model: model)
+        .inWindowModal(isPresented: $isCreatingLocation, preferredSize: CGSize(width: 620, height: 680)) {
+            CreateLocationView(model: model) {
+                isCreatingLocation = false
+            }
         }
-        .sheet(item: $importLocation) { location in
-            ImportDeckFromLocationView(location: location, model: model)
+        .inWindowModal(item: $importLocation, preferredSize: CGSize(width: 560, height: 400)) { location in
+            ImportDeckFromLocationView(location: location, model: model) {
+                importLocation = nil
+            }
         }
-        .sheet(item: $editLocation) { location in
+        .inWindowModal(item: $editLocation, preferredSize: CGSize(width: 660, height: 700)) { location in
             EditLocationView(
                 location: location,
                 cardCount: model.inventoryTotalsByLocation[location.normalizedName] ?? 0,
-                model: model
+                model: model,
+                onDismiss: { editLocation = nil }
             )
         }
     }
@@ -147,7 +152,7 @@ private struct EditLocationView: View {
     let location: LocationPolicy
     let cardCount: Int
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var name: String
     @State private var kind: LocationKind
     @State private var linkedDeckID: UUID?
@@ -157,10 +162,11 @@ private struct EditLocationView: View {
     @State private var isDeleting = false
     @State private var isConfirmingDelete = false
 
-    init(location: LocationPolicy, cardCount: Int, model: AppModel) {
+    init(location: LocationPolicy, cardCount: Int, model: AppModel, onDismiss: @escaping () -> Void) {
         self.location = location
         self.cardCount = cardCount
         self.model = model
+        self.onDismiss = onDismiss
         _name = State(initialValue: location.displayName)
         _kind = State(initialValue: location.kind)
         _linkedDeckID = State(initialValue: location.linkedDeckID)
@@ -234,7 +240,7 @@ private struct EditLocationView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onDismiss() }
                     .keyboardShortcut(.cancelAction)
                     .disabled(isWorking)
                 Button(isSaving ? "Saving…" : "Save Changes") {
@@ -249,7 +255,7 @@ private struct EditLocationView: View {
                             linkedDeckID: kind == .deck ? linkedDeckID : nil
                         ))
                         isSaving = false
-                        if saved { dismiss() }
+                        if saved { onDismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -269,7 +275,7 @@ private struct EditLocationView: View {
                     isDeleting = true
                     let deleted = await model.deleteEmptyInventoryLocation(location)
                     isDeleting = false
-                    if deleted { dismiss() }
+                    if deleted { onDismiss() }
                 }
             }
         } message: {
@@ -281,13 +287,14 @@ private struct EditLocationView: View {
 private struct ImportDeckFromLocationView: View {
     let location: LocationPolicy
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var deckName: String
     @State private var isImporting = false
 
-    init(location: LocationPolicy, model: AppModel) {
+    init(location: LocationPolicy, model: AppModel, onDismiss: @escaping () -> Void) {
         self.location = location
         self.model = model
+        self.onDismiss = onDismiss
         _deckName = State(initialValue: location.displayName)
     }
 
@@ -303,13 +310,13 @@ private struct ImportDeckFromLocationView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") { onDismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(isImporting ? "Importing…" : "Import and Link") {
                     isImporting = true
                     Task {
-                        if await model.importDeck(from: location, named: deckName) { dismiss() }
+                        if await model.importDeck(from: location, named: deckName) { onDismiss() }
                         isImporting = false
                     }
                 }
