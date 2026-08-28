@@ -2,6 +2,18 @@
 
 All notable changes to RiftBuilder are recorded in this file. RiftBuilder follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-08-28
+
+### Added
+
+- Added an inventory edit mode for changing each card's quantity by location, including moving, adding, and removing copies through reconciled CardNexus bulk updates.
+- Added a Force catalogue sync setting for downloading and rebuilding local catalogue data even when the remote checksum has not changed.
+
+### Fixed
+
+- Merged card tags across catalogue printings so deck-building eligibility and card metadata remain complete regardless of which printing supplies the preferred image.
+- Made empty CardNexus location deletion idempotent and compatible with successful empty response bodies, with clearer location-creation labeling.
+
 ## [0.2.2] - 2026-08-26
 
 ### Added

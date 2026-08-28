@@ -172,8 +172,8 @@ final class CardNexusInventoryWriteTests: XCTestCase {
         XCTAssertNil(items[1]["quantity"])
     }
 
-    func testInventoryLineDeleteUsesEncodedPath() async throws {
-        let transport = WriteTransport(responses: [writeResponse(#"{"deleted":true}"#)])
+    func testInventoryLineDeleteUsesEncodedPathAndAcceptsSuccessfulEmptyResponse() async throws {
+        let transport = WriteTransport(responses: [writeResponse("", status: 204)])
         try await makeWriteClient(transport).deleteInventoryLine(inventoryID: "line / one")
 
         let captured = await transport.requests()
