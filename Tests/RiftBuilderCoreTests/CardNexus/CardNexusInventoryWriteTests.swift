@@ -94,6 +94,30 @@ final class CardNexusInventoryWriteTests: XCTestCase {
         XCTAssertEqual(String(decoding: request.body, as: UTF8.self), "{}")
     }
 
+    func testLocationDeleteTreatsNotFoundAsSuccess() async throws {
+        let transport = WriteTransport(responses: [writeResponse(#"{"code":"NOT_FOUND","status":404,"message":"You have no location with this name","data":{}}"#, status: 404)])
+
+        try await makeWriteClient(transport).deleteInventoryLocation(named: "Already Gone")
+
+        let captured = await transport.requests()
+        XCTAssertEqual(captured.count, 1)
+    }
+
+    func testLocationDeleteStillThrowsOtherAPIErrors() async {
+        let transport = WriteTransport(responses: [writeResponse(#"{"code":"FORBIDDEN","status":403,"message":"Missing scope","data":{}}"#, status: 403)])
+
+        do {
+            try await makeWriteClient(transport).deleteInventoryLocation(named: "Protected")
+            XCTFail("Expected API error")
+        } catch let error as CardNexusClientError {
+            guard case let .response(status, _, envelope) = error else { return XCTFail("Unexpected \(error)") }
+            XCTAssertEqual(status, 403)
+            XCTAssertEqual(envelope?.code, "FORBIDDEN")
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+    }
+
     func testBulkRejectsDuplicateSourceLineWithoutNetworkRequest() async {
         let transport = WriteTransport(responses: [])
         do {
