@@ -121,6 +121,10 @@ struct CreateLocationView: View {
     @State private var isSaving = false
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var creationButtonTitle: String {
+        if isSaving { return "Writing to CardNexus…" }
+        return kind == .deck && selectedDeckID != nil ? "Create and Link" : "Create Location"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -167,7 +171,7 @@ struct CreateLocationView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(isSaving ? "Writing to CardNexus…" : "Create and Link") {
+                Button(creationButtonTitle) {
                     Task {
                         isSaving = true
                         let saved = await model.createInventoryLocation(name: trimmedName, color: color.cardNexusLocationHex, icon: icon, kind: kind, linkedDeckID: selectedDeckID)
