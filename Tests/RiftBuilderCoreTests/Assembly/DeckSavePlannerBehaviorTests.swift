@@ -156,7 +156,9 @@ final class DeckSavePlannerBehaviorTests: XCTestCase {
             draft: [entry("ahri", zone: .sideboard, quantity: 1), entry("mind-rune", zone: .rune, quantity: 12)]
         )
 
-        let plan = try fixture.plan(inventory: fixture.inventory(lines: []))
+        let plan = try fixture.plan(inventory: fixture.inventory(lines: [
+            line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal"),
+        ]))
 
         XCTAssertTrue(plan.canApply)
         XCTAssertTrue(plan.movements.isEmpty)
@@ -181,6 +183,42 @@ final class DeckSavePlannerBehaviorTests: XCTestCase {
         let plan = try fixture.plan(
             inventory: fixture.inventory(lines: [line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal")])
         )
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertTrue(plan.movements.isEmpty)
+        XCTAssertTrue(plan.requirements.isEmpty)
+        XCTAssertTrue(plan.returnRoutes.isEmpty)
+    }
+
+    func testPhysicalDriftIsReconciledEvenWhenDraftMatchesSavedDefinition() throws {
+        let fixture = SavePlanFixture(
+            saved: [entry("ahri", quantity: 2)],
+            draft: [entry("ahri", quantity: 2)]
+        )
+        let inventory = fixture.inventory(lines: [
+            line("deck-ahri", productID: 1, quantity: 1, location: "Deck Ezreal"),
+            line("box-ahri", productID: 1, quantity: 1, location: "Box A"),
+        ])
+
+        let plan = try fixture.plan(inventory: inventory)
+
+        XCTAssertTrue(plan.canApply)
+        XCTAssertEqual(plan.movements.map(\.inventoryID), ["box-ahri"])
+        XCTAssertEqual(plan.movements.map(\.quantity), [1])
+        XCTAssertEqual(plan.requirements.first?.requested, 1)
+    }
+
+    func testBuildDoesNotReturnPhysicalExtrasWhenDefinitionIsUnchanged() throws {
+        let fixture = SavePlanFixture(
+            saved: [entry("ahri", quantity: 1), entry("mind-rune", zone: .rune, quantity: 2)],
+            draft: [entry("ahri", quantity: 1), entry("mind-rune", zone: .rune, quantity: 2)]
+        )
+        let inventory = fixture.inventory(lines: [
+            line("deck-ahri", productID: 1, quantity: 2, location: "Deck Ezreal"),
+            line("deck-runes", productID: 4, quantity: 2, location: "Deck Ezreal"),
+        ])
+
+        let plan = try fixture.plan(inventory: inventory)
 
         XCTAssertTrue(plan.canApply)
         XCTAssertTrue(plan.movements.isEmpty)
