@@ -257,6 +257,22 @@ extension DeckZone {
     }
 }
 
+extension DeckState {
+    var appTitle: String {
+        switch self {
+        case .planned: "In Construction"
+        case .assembled: "Built"
+        }
+    }
+
+    var appSortOrder: Int {
+        switch self {
+        case .planned: 0
+        case .assembled: 1
+        }
+    }
+}
+
 extension LocationKind {
     var appTitle: String {
         switch self {

@@ -68,8 +68,10 @@ struct InventoryView: View {
             }
         }
         .cardDetailSheet(item: $presentedCard)
-        .sheet(item: $bulkMoveSelection) { selection in
-            BulkMoveInventoryView(selection: selection, model: model)
+        .inWindowModal(item: $bulkMoveSelection, preferredSize: CGSize(width: 620, height: 640)) { selection in
+            BulkMoveInventoryView(selection: selection, model: model) {
+                bulkMoveSelection = nil
+            }
         }
     }
 
@@ -210,6 +212,8 @@ private struct InventoryTable: View {
                 .width(55)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
         .accessibilityLabel("Inventory cards")
     }
 }

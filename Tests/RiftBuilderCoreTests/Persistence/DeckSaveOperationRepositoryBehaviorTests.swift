@@ -48,10 +48,13 @@ final class DeckSaveOperationRepositoryBehaviorTests: XCTestCase {
         )
 
         XCTAssertEqual(finalized?.entries.map(\.quantity), [3])
+        XCTAssertEqual(finalized?.deck.state, .assembled)
         let clearedDraft = try await context.repository.deckDraftSnapshot(id: context.deck.id)
         let clearedOperation = try await context.repository.deckSaveOperation(deckID: context.deck.id)
+        let reloaded = try await context.repository.deckSnapshot(id: context.deck.id)
         XCTAssertNil(clearedDraft)
         XCTAssertNil(clearedOperation)
+        XCTAssertEqual(reloaded?.deck.state, .assembled)
     }
 
     func testFinalizedAdditionsRememberOriginAndFinalizedRemovalConsumesItEvenWithOverride() async throws {

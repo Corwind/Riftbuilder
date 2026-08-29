@@ -68,8 +68,10 @@ struct AppShellView: View {
         ) { result in
             deckTransfer.exportCompleted(result, appModel: model)
         }
-        .sheet(item: $model.deckNamingRequest) { request in
-            DeckNamingSheet(request: request, model: model)
+        .inWindowModal(item: $model.deckNamingRequest, preferredSize: CGSize(width: 560, height: 520)) { request in
+            DeckNamingSheet(request: request, model: model) {
+                model.deckNamingRequest = nil
+            }
         }
         .alert("RiftBuilder", isPresented: Binding(
             get: { model.notice != nil },

@@ -111,7 +111,7 @@ extension AppModel {
 
 struct CreateLocationView: View {
     @Bindable var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @State private var name = ""
     @State private var selectedDeckID: UUID?
     @State private var kind: LocationKind = .storage
@@ -170,13 +170,13 @@ struct CreateLocationView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { onDismiss() }.keyboardShortcut(.cancelAction)
                 Button(creationButtonTitle) {
                     Task {
                         isSaving = true
                         let saved = await model.createInventoryLocation(name: trimmedName, color: color.cardNexusLocationHex, icon: icon, kind: kind, linkedDeckID: selectedDeckID)
                         isSaving = false
-                        if saved { dismiss() }
+                        if saved { onDismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)

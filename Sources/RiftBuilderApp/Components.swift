@@ -20,18 +20,20 @@ struct QuantityBadge: View {
     let title: String
     let value: Int
     var tint: Color = .secondary
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: compact ? 3 : 4) {
             Text(title)
             Text(value, format: .number)
                 .fontWeight(.semibold)
                 .monospacedDigit()
         }
-        .font(.caption)
+        .font(compact ? .caption2 : .caption)
+        .lineLimit(1)
         .foregroundStyle(tint)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
+        .padding(.horizontal, compact ? 5 : 7)
+        .padding(.vertical, compact ? 3 : 4)
         .background(tint.opacity(0.16), in: Capsule())
         .accessibilityElement(children: .combine)
     }

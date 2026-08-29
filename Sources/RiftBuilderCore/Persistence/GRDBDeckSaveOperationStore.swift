@@ -94,7 +94,11 @@ extension GRDBRiftBuilderRepository: DeckSaveOperationStoring {
                 FROM deck_draft_entry
                 WHERE deck_id = ?
                 """, arguments: [deckID.uuidString])
-            try db.execute(sql: "UPDATE deck SET updated_at = ? WHERE id = ?", arguments: [PersistenceCoding.date(date), deckID.uuidString])
+            try db.execute(sql: "UPDATE deck SET state = ?, updated_at = ? WHERE id = ?", arguments: [
+                DeckState.assembled.rawValue,
+                PersistenceCoding.date(date),
+                deckID.uuidString,
+            ])
             try db.execute(sql: "DELETE FROM deck_draft WHERE deck_id = ?", arguments: [deckID.uuidString])
             try db.execute(sql: "DELETE FROM deck_save_operation WHERE operation_id = ?", arguments: [operationID.uuidString])
             return try Self.deckSnapshot(id: deckID, in: db)

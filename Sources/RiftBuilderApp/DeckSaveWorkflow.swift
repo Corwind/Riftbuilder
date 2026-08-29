@@ -6,6 +6,7 @@ import SwiftUI
 struct AppDeckSaveRequirement: Identifiable, Hashable, Sendable {
     let result: DeckSaveRequirementResult
     let cardName: String
+    let domains: [String]
 
     var id: DeckPhysicalRequirementKey { result.requirement }
 }
@@ -26,7 +27,6 @@ struct AppDeckSaveProposal: Identifiable, Sendable {
 enum AppDeckSaveError: LocalizedError {
     case deckNotFound
     case draftNotFound
-    case noChanges
     case noStorageForRemovals
     case planNotReady
 
@@ -34,7 +34,6 @@ enum AppDeckSaveError: LocalizedError {
         switch self {
         case .deckNotFound: "The selected deck could not be loaded."
         case .draftNotFound: "The selected deck has no editing draft."
-        case .noChanges: "This deck has no unsaved changes."
         case .noStorageForRemovals: "At least one available Box location is required before removed cards can be saved."
         case .planNotReady: "Resolve every destination and missing card before saving."
         }
@@ -66,8 +65,6 @@ extension LiveAppDataService {
     func makeDeckSaveProposal(deckID: UUID, removalDestinations: [DeckRemovalDestination], inventoryAvailability: DeckInventoryAvailability) async throws -> AppDeckSaveProposal {
         guard let saved = try await repository.deckSnapshot(id: deckID) else { throw AppDeckSaveError.deckNotFound }
         guard let draft = try await repository.deckDraftSnapshot(id: deckID) else { throw AppDeckSaveError.draftNotFound }
-        guard !DeckDraftDiff(savedEntries: saved.entries, draftEntries: draft.entries).isEmpty else { throw AppDeckSaveError.noChanges }
-
         var inventory = try await assemblyStore.assemblyInventorySnapshot()
         let originLots = try await repository.deckCardOriginLots(deckID: deckID)
         var deckLocation = inventory.locationPolicies.first(where: { $0.kind == .deck && $0.linkedDeckID == deckID })
@@ -105,18 +102,25 @@ extension LiveAppDataService {
         let identities = draft.identities.merging(saved.identities) { current, _ in current }
         let movements = plan.movements.map { movement in
             let printing = inventory.printingsByProductID[movement.productID]
+            let identity = identities[movement.nameSlug]
             let details = [printing?.expansionSlug, printing?.printNumber, printing?.variant, printing?.rarity]
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: " · ")
             return AppPhysicalMovement(
                 movement: movement,
-                cardName: identities[movement.nameSlug]?.displayName ?? printing?.displayName ?? movement.nameSlug,
-                printingDescription: details.isEmpty ? "Product \(movement.productID)" : "\(details) · Product \(movement.productID)"
+                cardName: identity?.displayName ?? printing?.displayName ?? movement.nameSlug,
+                printingDescription: details.isEmpty ? "Product \(movement.productID)" : "\(details) · Product \(movement.productID)",
+                domains: identity?.appVisibleDomains ?? []
             )
         }
         let requirements = plan.requirements.map { result in
-            AppDeckSaveRequirement(result: result, cardName: identities[result.requirement.nameSlug]?.displayName ?? result.requirement.nameSlug)
+            let identity = identities[result.requirement.nameSlug]
+            return AppDeckSaveRequirement(
+                result: result,
+                cardName: identity?.displayName ?? result.requirement.nameSlug,
+                domains: identity?.appVisibleDomains ?? []
+            )
         }
         let storage = inventory.locationPolicies.filter { $0.kind == .storage && $0.countsAsAvailable }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
@@ -253,11 +257,13 @@ struct DeckSaveReviewView: View {
     let appModel: AppModel
     @State private var acknowledged = false
 
+    private var isBuilding: Bool { appModel.selectedDeck?.state == .planned }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Review Deck Save").font(.title2.weight(.semibold))
+                    Text(isBuilding ? "Build Deck" : "Update Deck").font(.title2.weight(.semibold))
                     Text(workflow.proposal?.deckName ?? "Deck").foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -297,7 +303,13 @@ struct DeckSaveReviewView: View {
                     ForEach(routes, id: \.key) { route in
                         HStack(alignment: .center) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("\(route.quantity) × \(cardName(for: route.key.requirement, in: proposal))").fontWeight(.medium)
+                                HStack(spacing: 8) {
+                                    Text("\(route.quantity) × \(cardName(for: route.key.requirement, in: proposal))").fontWeight(.medium)
+                                    let domains = domains(for: route.key.requirement, in: proposal)
+                                    if !domains.isEmpty {
+                                        GridCardDomainTags(domains: domains, isRune: false)
+                                    }
+                                }
                                 Text(route.previousLocationName.map { "Previous location: \($0)" } ?? "Previous location was not recorded")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -323,6 +335,10 @@ struct DeckSaveReviewView: View {
 
     private func cardName(for requirement: DeckPhysicalRequirementKey, in proposal: AppDeckSaveProposal) -> String {
         proposal.requirements.first { $0.result.requirement == requirement }?.cardName ?? requirement.nameSlug
+    }
+
+    private func domains(for requirement: DeckPhysicalRequirementKey, in proposal: AppDeckSaveProposal) -> [String] {
+        proposal.requirements.first { $0.result.requirement == requirement }?.domains ?? []
     }
 
     @ViewBuilder
@@ -354,7 +370,12 @@ struct DeckSaveReviewView: View {
                         HStack(alignment: .top, spacing: 14) {
                             Text(item.movement.quantity, format: .number).font(.headline.monospacedDigit()).frame(width: 30, alignment: .trailing)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.cardName).fontWeight(.medium)
+                                HStack(spacing: 8) {
+                                    Text(item.cardName).fontWeight(.medium)
+                                    if !item.domains.isEmpty {
+                                        GridCardDomainTags(domains: item.domains, isRune: false)
+                                    }
+                                }
                                 Text(item.printingDescription).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -399,7 +420,7 @@ struct DeckSaveReviewView: View {
             if let outcome = workflow.outcome, outcome.isFinalized {
                 Button("Done") { workflow.close() }.buttonStyle(.borderedProminent)
             } else {
-                Button(workflow.phase == .applying ? "Saving…" : "Confirm and Save") {
+                Button(workflow.phase == .applying ? (isBuilding ? "Building…" : "Updating…") : (isBuilding ? "Confirm Build" : "Confirm Update")) {
                     Task { await workflow.apply(appModel: appModel) }
                 }
                 .buttonStyle(.borderedProminent)
@@ -422,14 +443,15 @@ struct DeckSaveWorkflowHost: ViewModifier {
                         Button {
                             Task { await workflow.begin(deckID: appModel.selectedDeckID, appModel: appModel) }
                         } label: {
-                            Label("Save Deck", systemImage: "checkmark.circle")
+                            Label(appModel.selectedDeck?.state == .planned ? "Build Deck" : "Update Deck", systemImage: "checkmark.circle")
                         }
                         .keyboardShortcut("s", modifiers: [.command])
+                        .help(appModel.selectedDeck?.state == .planned ? "Build this deck and review every required physical move" : "Update this deck and review every required physical move")
                         .disabled(workflow.phase != .idle)
                     }
                 }
             }
-            .sheet(isPresented: $workflow.isPresented) {
+            .inWindowModal(isPresented: $workflow.isPresented, preferredSize: CGSize(width: 900, height: 700)) {
                 DeckSaveReviewView(workflow: workflow, appModel: appModel)
             }
     }
