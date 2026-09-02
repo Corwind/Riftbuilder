@@ -9,7 +9,7 @@ public final class GRDBAssemblyStore: AssemblyInventoryProviding, AssemblyExecut
 
     public init(databaseWriter: any DatabaseWriter) throws {
         self.databaseWriter = databaseWriter
-        try AssemblyDatabaseSchema.migrator.migrate(databaseWriter)
+        try RiftBuilderDatabaseSchema.migrator.migrate(databaseWriter)
     }
 
     public convenience init(path: String) throws {
@@ -63,22 +63,6 @@ public final class GRDBAssemblyStore: AssemblyInventoryProviding, AssemblyExecut
         try await databaseWriter.write { db in
             try db.execute(sql: "DELETE FROM assembly_execution WHERE plan_id = ?", arguments: [planID.uuidString])
         }
-    }
-}
-
-private enum AssemblyDatabaseSchema {
-    static var migrator: DatabaseMigrator {
-        var migrator = DatabaseMigrator()
-        migrator.registerMigration("v2_assembly_execution") { db in
-            try db.create(table: "assembly_execution") { table in
-                table.column("plan_id", .text).primaryKey()
-                table.column("deck_id", .text).notNull().references("deck", onDelete: .cascade)
-                table.column("report_json", .text).notNull()
-                table.column("updated_at", .text).notNull()
-            }
-            try db.create(index: "idx_assembly_execution_deck", on: "assembly_execution", columns: ["deck_id"])
-        }
-        return migrator
     }
 }
 

@@ -2,6 +2,17 @@ import Foundation
 import GRDB
 
 enum RiftBuilderDatabaseSchema {
+    static let migrationIdentifiers = [
+        "v1_initial",
+        "v2_assembly_execution",
+        "v2_location_appearance",
+        "v3_deck_drafts",
+        "v4_deck_save_operations",
+        "v5_deck_card_origins",
+        "v6_unique_deck_location_links",
+        "v7_cardmarket_listings",
+    ]
+
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
@@ -115,6 +126,18 @@ enum RiftBuilderDatabaseSchema {
                 """)
         }
 
+        // This identifier shipped in v0.1.0 through a separate migrator. It is
+        // intentionally retained and folded into the canonical sequence.
+        migrator.registerMigration("v2_assembly_execution") { db in
+            try db.create(table: "assembly_execution") { table in
+                table.column("plan_id", .text).primaryKey()
+                table.column("deck_id", .text).notNull().references("deck", onDelete: .cascade)
+                table.column("report_json", .text).notNull()
+                table.column("updated_at", .text).notNull()
+            }
+            try db.create(index: "idx_assembly_execution_deck", on: "assembly_execution", columns: ["deck_id"])
+        }
+
         migrator.registerMigration("v2_location_appearance") { db in
             try db.alter(table: "observed_location") { table in
                 table.add(column: "color", .text)
@@ -217,6 +240,52 @@ enum RiftBuilderDatabaseSchema {
                 CREATE UNIQUE INDEX idx_location_policy_linked_deck_unique
                 ON location_policy(linked_deck_id)
                 WHERE linked_deck_id IS NOT NULL
+                """)
+        }
+
+        migrator.registerMigration("v7_cardmarket_listings") { db in
+            // Cardmarket data belongs to an exact printing, not the shared card
+            // identity: the same card can have a different price in each set or
+            // variant. Catalogue refreshes leave this imported data untouched.
+            try db.create(table: "cardmarket_listing") { table in
+                table.column("product_id", .integer)
+                    .primaryKey()
+                    .references("card_printing", onDelete: .cascade)
+                table.column("url", .text).notNull().unique()
+                table.column("trend_price_eur_cents", .integer).check { $0 >= 0 }
+                table.column("average_7_days_price_eur_cents", .integer).check { $0 >= 0 }
+                table.column("average_30_days_price_eur_cents", .integer).check { $0 >= 0 }
+                table.column("scraped_at", .text).notNull()
+            }
+
+            // Give every reader the same price-selection policy while retaining
+            // each source value for auditing and future policy changes.
+            try db.execute(sql: """
+                CREATE VIEW cardmarket_price AS
+                SELECT
+                    product_id,
+                    url,
+                    CASE
+                        WHEN COALESCE(
+                            trend_price_eur_cents,
+                            average_7_days_price_eur_cents,
+                            average_30_days_price_eur_cents
+                        ) IS NULL THEN NULL
+                        ELSE 'EUR'
+                    END AS currency,
+                    COALESCE(
+                        trend_price_eur_cents,
+                        average_7_days_price_eur_cents,
+                        average_30_days_price_eur_cents
+                    ) AS price_cents,
+                    CASE
+                        WHEN trend_price_eur_cents IS NOT NULL THEN 'trend'
+                        WHEN average_7_days_price_eur_cents IS NOT NULL THEN 'average_7_days'
+                        WHEN average_30_days_price_eur_cents IS NOT NULL THEN 'average_30_days'
+                        ELSE NULL
+                    END AS price_source,
+                    scraped_at
+                FROM cardmarket_listing
                 """)
         }
 

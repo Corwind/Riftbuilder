@@ -74,6 +74,65 @@ swift build --disable-sandbox
 swift test --disable-sandbox
 ```
 
+## One-shot Cardmarket import
+
+The scraper-specific Cardmarket importer is a separate command-line target and is not linked into the RiftBuilder app:
+
+```sh
+swift run --disable-sandbox riftbuilder-cardmarket-import --input /tmp/products.jsonl
+```
+
+It uses `~/Library/Application Support/RiftBuilder/riftbuilder.sqlite` by default. Pass `--database <path>` to target another database or `--dry-run` to inspect associations without writing listings. Dry runs still apply pending database schema migrations.
+
+The importer only associates records when expansion, collector number, and normalized card name agree. Ambiguous variants, missing catalogue printings, and conflicting source records are reported and skipped. Cardmarket links are retained for matched records regardless of scrape currency, while only EUR price observations are stored.
+
+### Input JSONL schema
+
+The input is newline-delimited JSON: each non-empty line must contain one complete product object. Additional fields are ignored. The importer expects this structure:
+
+```json
+{
+  "source": {
+    "url": "https://www.cardmarket.com/en/Riftbound/Products/Singles/Origins/Card-Name",
+    "scrapedAt": "2026-08-29T12:03:21.736Z"
+  },
+  "identity": {
+    "displayName": "Card Name Origins - Singles",
+    "expansionName": "Origins",
+    "expansionCode": "OGN",
+    "collectorNumber": "299*"
+  },
+  "prices": {
+    "currency": "EUR",
+    "trend": {
+      "raw": "1,97 €",
+      "value": 1.97
+    },
+    "average7Days": {
+      "raw": null,
+      "value": null
+    },
+    "average30Days": {
+      "raw": null,
+      "value": null
+    }
+  },
+  "attributes": {
+    "Number": "299*",
+    "7-days average price": "1,82 €",
+    "30-days average price": "1,63 €"
+  }
+}
+```
+
+`source.url` and `source.scrapedAt`; all four `identity` strings; the `prices` object with `trend`, `average7Days`, and `average30Days` price-point objects; and the string-to-string `attributes` object are required. `prices.currency`, plus each price point's `raw` string and numeric `value`, may be absent or `null`.
+
+`identity.expansionCode` must be one of `OGN`, `OGNX`, `OGS`, `PROK`, `SFD`, `SFDX`, `SGN`, `T1X`, `UNL`, `UNLX`, `VEN`, or `VENX`. Matching is always constrained to the corresponding local expansion before collector number and normalized card name are compared.
+
+`attributes.Number` is used as the authoritative collector number when present, otherwise `identity.collectorNumber` is used. Slash-separated numbers are tried individually. For a trailing `*`, both the original form and a trailing-`S` alias are tried within the same expansion.
+
+Only numeric prices whose `prices.currency` is `EUR` are retained. Selection priority is `trend.value`, `average7Days.value`, then `average30Days.value`; when a structured average is absent, the importer can parse the euro-formatted `7-days average price` or `30-days average price` attribute.
+
 ## Releases
 
 Every release starts in [`CHANGELOG.md`](CHANGELOG.md). Add a new top-level release with a SemVer version, date, and bullet list of the main changes; set `CFBundleShortVersionString` in `Support/Info.plist` to the same version and increment `CFBundleVersion`. When that pull request is merged into `main`, GitHub Actions builds the release app, signs it, publishes a downloadable DMG and SHA-256 checksum as workflow artifacts, creates the matching `vMAJOR.MINOR.PATCH` tag, and publishes a GitHub Release using the changelog entry as its notes. The mounted DMG contains RiftBuilder and an Applications shortcut for drag-and-drop installation.
