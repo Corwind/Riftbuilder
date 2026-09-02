@@ -83,6 +83,7 @@ struct AppInventoryCard: Identifiable, Hashable, Sendable {
     let rarity: String?
     let finish: String?
     let language: String?
+    let marketListings: [CardMarketListing]
 
     var id: String { identity.nameSlug }
 
@@ -106,9 +107,10 @@ struct AppInventoryCard: Identifiable, Hashable, Sendable {
         rarity = nil
         finish = nil
         language = nil
+        marketListings = summary.marketListings
     }
 
-    init(identity: CardIdentity, imageURL: URL? = nil, availability: CardAvailability, locations: [AppLocationBreakdown], expansion: String? = nil, rarity: String? = nil, finish: String? = nil, language: String? = nil) {
+    init(identity: CardIdentity, imageURL: URL? = nil, availability: CardAvailability, locations: [AppLocationBreakdown], expansion: String? = nil, rarity: String? = nil, finish: String? = nil, language: String? = nil, marketListings: [CardMarketListing] = []) {
         self.identity = identity
         self.imageURL = imageURL
         self.availability = availability
@@ -117,6 +119,7 @@ struct AppInventoryCard: Identifiable, Hashable, Sendable {
         self.rarity = rarity
         self.finish = finish
         self.language = language
+        self.marketListings = marketListings
     }
 }
 

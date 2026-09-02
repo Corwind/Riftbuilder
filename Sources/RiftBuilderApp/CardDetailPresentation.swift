@@ -12,6 +12,7 @@ struct AppCardDetail: Identifiable, Hashable {
     let finish: String?
     let language: String?
     let locations: [AppLocationBreakdown]
+    let marketListings: [CardMarketListing]
 
     var id: String { identity.nameSlug }
 
@@ -26,6 +27,7 @@ struct AppCardDetail: Identifiable, Hashable {
         finish = card.finish
         language = card.language
         locations = card.visibleLocations(filteredBy: nil)
+        marketListings = card.marketListings
     }
 
     init(catalogueCard card: AppCatalogueCard) {
@@ -39,6 +41,7 @@ struct AppCardDetail: Identifiable, Hashable {
         finish = nil
         language = nil
         locations = []
+        marketListings = card.marketListings
     }
 
     init(identity: CardIdentity, inventoryCard: AppInventoryCard?) {
@@ -52,6 +55,7 @@ struct AppCardDetail: Identifiable, Hashable {
         finish = inventoryCard?.finish
         language = inventoryCard?.language
         locations = inventoryCard?.visibleLocations(filteredBy: nil) ?? []
+        marketListings = inventoryCard?.marketListings ?? []
     }
 }
 
@@ -151,6 +155,9 @@ private struct CardDetailSheet: View {
                         }
 
                         metadataSection
+                        if !card.marketListings.isEmpty {
+                            marketSection
+                        }
 
                         if let availability = card.availability {
                             HStack(spacing: 8) {
@@ -202,6 +209,55 @@ private struct CardDetailSheet: View {
         }
     }
 
+    private var marketSection: some View {
+        detailSection("Cardmarket") {
+            VStack(spacing: 0) {
+                ForEach(Array(card.marketListings.enumerated()), id: \.element.id) { index, listing in
+                    Link(destination: listing.url) {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                let printingLabel = [listing.expansionSlug, listing.printNumber]
+                                    .compactMap { $0 }
+                                    .filter { !$0.isEmpty }
+                                    .joined(separator: " · ")
+                                Text(printingLabel.isEmpty ? listing.printingSlug : printingLabel)
+                                    .font(.body.weight(.medium))
+                                if !printingLabel.isEmpty {
+                                    Text(listing.printingSlug)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                if let priceCents = listing.priceCents {
+                                    Text(Double(priceCents) / 100, format: .currency(code: listing.currency ?? "EUR"))
+                                        .font(.body.monospacedDigit().weight(.semibold))
+                                    if let priceSource = listing.priceSource {
+                                        Text(priceSource.detailTitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    Text("View offers")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Image(systemName: "arrow.up.right.square")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if index < card.marketListings.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
     private var locationSection: some View {
         detailSection("Locations") {
             VStack(spacing: 0) {
@@ -246,6 +302,16 @@ private struct CardDetailSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private extension CardMarketPriceSource {
+    var detailTitle: String {
+        switch self {
+        case .trend: "Trend price"
+        case .average7Days: "7-day average"
+        case .average30Days: "30-day average"
+        }
     }
 }
 

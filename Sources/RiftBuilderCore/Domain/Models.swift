@@ -251,6 +251,15 @@ public struct InventoryCardSummary: Codable, Hashable, Identifiable, Sendable {
     public let preferredImageURL: URL?
     public let availability: CardAvailability
     public let locations: [LocationQuantity]
+    public let marketListings: [CardMarketListing]
+
+    public init(identity: CardIdentity, preferredImageURL: URL?, availability: CardAvailability, locations: [LocationQuantity], marketListings: [CardMarketListing] = []) {
+        self.identity = identity
+        self.preferredImageURL = preferredImageURL
+        self.availability = availability
+        self.locations = locations
+        self.marketListings = marketListings
+    }
 }
 
 public struct DeckSnapshot: Codable, Hashable, Sendable {

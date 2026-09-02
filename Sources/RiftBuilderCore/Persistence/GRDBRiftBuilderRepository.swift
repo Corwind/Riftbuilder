@@ -242,7 +242,8 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                     identity: identity,
                     preferredImageURL: imageURL,
                     availability: availability,
-                    locations: locations
+                    locations: locations,
+                    marketListings: try Self.cardMarketListings(nameSlug: identity.nameSlug, ownedOnly: true, in: db)
                 )
             }
         }
@@ -297,9 +298,15 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                        cp.expansion_slug,
                        cp.print_number,
                        cp.rarity,
-                       cp.image_url
+                       cp.image_url,
+                       cm.url AS cardmarket_url,
+                       cm.currency AS cardmarket_currency,
+                       cm.price_cents AS cardmarket_price_cents,
+                       cm.price_source AS cardmarket_price_source,
+                       cm.scraped_at AS cardmarket_scraped_at
                 FROM card_printing cp
                 JOIN card_identity ci ON ci.name_slug = cp.name_slug
+                LEFT JOIN cardmarket_price cm ON cm.product_id = cp.product_id
                 \(printingSearchClause)
                 ORDER BY cp.name_slug,
                          CASE WHEN cp.image_url IS NULL OR TRIM(cp.image_url) = '' THEN 1 ELSE 0 END,
@@ -307,6 +314,7 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                 """, arguments: arguments)
 
             var printingsByNameSlug: [String: [CataloguePrintingMetadata]] = [:]
+            var marketListingsByNameSlug: [String: [CardMarketListing]] = [:]
             for row in printingRows {
                 let nameSlug: String = row["name_slug"]
                 let imageValue: String? = row["image_url"]
@@ -318,6 +326,9 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                     rarity: row["rarity"],
                     imageURL: imageValue.flatMap(URL.init(string:))
                 ))
+                if let listing = Self.cardMarketListing(from: row) {
+                    marketListingsByNameSlug[nameSlug, default: []].append(listing)
+                }
             }
 
             return try identityRows.map { row in
@@ -328,7 +339,8 @@ public final class GRDBRiftBuilderRepository: RiftBuilderRepository, @unchecked 
                     preferredPrinting: printings.first,
                     printingCount: printings.count,
                     expansionSlugs: Self.stableUnique(printings.compactMap(\.expansionSlug)),
-                    rarities: Self.stableUnique(printings.compactMap(\.rarity))
+                    rarities: Self.stableUnique(printings.compactMap(\.rarity)),
+                    marketListings: marketListingsByNameSlug[identity.nameSlug] ?? []
                 )
             }
         }
@@ -793,6 +805,58 @@ extension GRDBRiftBuilderRepository {
                 printing.imageBackURL?.absoluteString,
                 try PersistenceCoding.encode(printing.attributes),
             ])
+    }
+
+    static func cardMarketListings(nameSlug: String, ownedOnly: Bool, in db: Database) throws -> [CardMarketListing] {
+        let ownedClause = ownedOnly
+            ? """
+              AND EXISTS (
+                  SELECT 1
+                  FROM inventory_line il
+                  WHERE il.product_id = cp.product_id AND il.quantity > 0
+              )
+              """
+            : ""
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT cp.product_id,
+                       cp.printing_slug,
+                       cp.expansion_slug,
+                       cp.print_number,
+                       cm.url AS cardmarket_url,
+                       cm.currency AS cardmarket_currency,
+                       cm.price_cents AS cardmarket_price_cents,
+                       cm.price_source AS cardmarket_price_source,
+                       cm.scraped_at AS cardmarket_scraped_at
+                FROM card_printing cp
+                JOIN cardmarket_price cm ON cm.product_id = cp.product_id
+                WHERE cp.name_slug = ?
+                \(ownedClause)
+                ORDER BY cp.expansion_slug, cp.print_number, cp.product_id
+                """,
+            arguments: [nameSlug]
+        )
+        return rows.compactMap(cardMarketListing(from:))
+    }
+
+    static func cardMarketListing(from row: Row) -> CardMarketListing? {
+        guard let urlValue = row["cardmarket_url"] as String?,
+              let url = URL(string: urlValue),
+              let scrapedAt = row["cardmarket_scraped_at"] as String?
+        else { return nil }
+        let sourceValue = row["cardmarket_price_source"] as String?
+        return CardMarketListing(
+            productID: row["product_id"],
+            printingSlug: row["printing_slug"],
+            expansionSlug: row["expansion_slug"],
+            printNumber: row["print_number"],
+            url: url,
+            currency: row["cardmarket_currency"],
+            priceCents: row["cardmarket_price_cents"],
+            priceSource: sourceValue.flatMap(CardMarketPriceSource.init(rawValue:)),
+            scrapedAt: scrapedAt
+        )
     }
 
     static func setMetadata(_ key: String, value: String, in db: Database) throws {

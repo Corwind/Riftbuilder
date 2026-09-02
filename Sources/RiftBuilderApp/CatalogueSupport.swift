@@ -9,6 +9,7 @@ struct AppCatalogueCard: Identifiable, Hashable, Sendable {
     let rarities: [String]
     let preferredPrinting: CataloguePrintingMetadata?
     let availability: CardAvailability
+    let marketListings: [CardMarketListing]
 
     var id: String { identity.nameSlug }
 
@@ -19,7 +20,8 @@ struct AppCatalogueCard: Identifiable, Hashable, Sendable {
             availability: availability,
             locations: [],
             expansion: preferredPrinting?.expansionSlug,
-            rarity: preferredPrinting?.rarity
+            rarity: preferredPrinting?.rarity,
+            marketListings: marketListings
         )
     }
 }
@@ -39,7 +41,8 @@ extension CatalogueServicing {
                 expansionSlugs: [$0.expansion].compactMap { $0 },
                 rarities: [$0.rarity].compactMap { $0 },
                 preferredPrinting: nil,
-                availability: $0.availability
+                availability: $0.availability,
+                marketListings: $0.marketListings
             )
         }
     }
@@ -64,7 +67,8 @@ extension LiveAppDataService {
                 expansionSlugs: card.expansionSlugs,
                 rarities: card.rarities,
                 preferredPrinting: card.preferredPrinting,
-                availability: availability[card.identity.nameSlug] ?? CardAvailability(totalOwned: 0, availableInStorage: 0)
+                availability: availability[card.identity.nameSlug] ?? CardAvailability(totalOwned: 0, availableInStorage: 0),
+                marketListings: card.marketListings
             )
         }
     }
