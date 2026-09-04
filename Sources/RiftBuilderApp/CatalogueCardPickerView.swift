@@ -5,6 +5,7 @@ struct CatalogueCardPickerView: View {
     @Bindable var model: AppModel
     let onDismiss: () -> Void
     @State private var presentedCard: AppCardDetail?
+    @FocusState private var pickerSearchFocused: Bool
 
     private var eligibleCards: [AppCatalogueCard] {
         model.catalogue.filter { card in
@@ -79,12 +80,32 @@ struct CatalogueCardPickerView: View {
                 Button("Done") { onDismiss() }.keyboardShortcut(.cancelAction)
             }
             .padding()
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search the card catalogue", text: $model.pickerSearch)
+                    .textFieldStyle(.plain)
+                    .focused($pickerSearchFocused)
+                if !model.pickerSearch.isEmpty {
+                    Button {
+                        model.pickerSearch = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
             Divider()
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .searchable(text: $model.pickerSearch, prompt: "Search the card catalogue")
-        .task { await model.loadCatalogue() }
+        .task {
+            await model.loadCatalogue()
+            pickerSearchFocused = true
+        }
         .cardDetailSheet(item: $presentedCard)
     }
 
