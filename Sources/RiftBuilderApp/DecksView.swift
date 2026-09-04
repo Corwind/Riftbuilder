@@ -324,13 +324,39 @@ private struct DeckEditorView: View {
         let battlefields = Set(snapshot.entries.filter { $0.zone == .battlefield }.map(\.nameSlug)).count
         let available = buildableQuantity(in: snapshot)
         let required = snapshot.entries.reduce(0) { $0 + $1.quantity }
+        let priceValue = deckPriceString(for: snapshot)
         return HStack(spacing: 10) {
             MetricCard(title: "Main deck", value: "\(main) / 40", systemImage: "rectangle.stack")
             MetricCard(title: "Runes", value: "\(runes) / 12", systemImage: "diamond")
             MetricCard(title: "Battlefields", value: "\(battlefields) / 3", systemImage: "map")
             MetricCard(title: "Buildable", value: "\(available) / \(required)", systemImage: "checkmark.circle")
+            MetricCard(title: "Deck price", value: priceValue, systemImage: "tag")
         }
     }
+
+    private func deckPriceString(for snapshot: DeckSnapshot) -> String {
+        var marketListingsBySlug: [String: [CardMarketListing]] = [:]
+        for entry in snapshot.entries {
+            guard let listings = model.catalogueByNameSlug[entry.nameSlug]?.marketListings,
+                  !listings.isEmpty else { continue }
+            if marketListingsBySlug[entry.nameSlug] == nil {
+                marketListingsBySlug[entry.nameSlug] = listings
+            }
+        }
+        let summary = DeckPriceCalculator.calculate(
+            entries: snapshot.entries,
+            marketListingsBySlug: marketListingsBySlug
+        )
+        guard !summary.hasNoPriceData else { return "—" }
+        return Self.priceFormatter.string(from: NSNumber(value: Double(summary.totalCents) / 100)) ?? "—"
+    }
+
+    private static let priceFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "EUR"
+        return formatter
+    }()
 
     private var validationPanel: some View {
         DisclosureGroup {
